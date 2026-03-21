@@ -57,4 +57,4 @@ Pre-computed assets (chips, CAMs, SAM embeddings) are included in the repo. The 
 
 ## License
 
-MIT
+Apache 2.0
