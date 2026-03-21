@@ -1,6 +1,10 @@
 # Glooper: The Geospatial Human-in-the-Loop Pipeline for Remote Sensing ML
 
+Try it out at [https://dwgodwin.github.io/glooper/](https://dwgodwin.github.io/glooper/)!
+
 ![glooper_demo](https://github.com/user-attachments/assets/b2854e49-2db5-4a1d-b38c-9b7b0ef764a4)
+
+## The Motivation
 
 High quality label data is key for making maps with machine learning. Creating high quality label data is labor-intensive, monotonous, and tricky to do well. Feedback is on the order of weeks, and projects die in the back-and-forth on data quality. What would it take to **look forward to** a labeling campaign? What would it take to be able to come back to a mapping project and make it even better?
 
