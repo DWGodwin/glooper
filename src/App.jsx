@@ -32,7 +32,7 @@ function App() {
       container: mapContainer.current,
       style: makeStyle(),
       center: [-71.82, 42.25],
-      zoom: 14,
+      zoom: 17,
     })
     map.current = m
 
@@ -264,6 +264,14 @@ function App() {
         activeChipId = chipId
         activeChipCorners = imageCoords
         setSelectedChipId(chipId)
+
+        // Zoom to the selected chip
+        const lngs = imageCoords.map(c => c[0])
+        const lats = imageCoords.map(c => c[1])
+        m.fitBounds(
+          [[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]],
+          { padding: 80, duration: 500 }
+        )
 
         // Highlight the selected chip
         m.setPaintProperty('chips-outline', 'line-color', [

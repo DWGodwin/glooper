@@ -27,7 +27,7 @@ function InfoPanel() {
           <div>
             <strong>Cheap labels</strong>
             <span className="info-detail">
-              Each image chip gets a simple present/absent label &mdash; no pixel-level annotation needed.
+              Each image chip gets a simple present/absent label &mdash; no pixel-level annotation needed. In this case, green chips have rooftop solar, red chips have none.
             </span>
           </div>
         </div>

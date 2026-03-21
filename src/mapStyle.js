@@ -35,7 +35,7 @@ export function makeStyle() {
         type: 'raster',
         source: 'imagery',
         minzoom: 0,
-        maxzoom: 19,
+        maxzoom: 18,
         layout: { visibility: 'visible' },
       },
       {
@@ -43,7 +43,7 @@ export function makeStyle() {
         type: 'raster',
         source: 'massgis',
         minzoom: 0,
-        maxzoom: 19,
+        maxzoom: 20,
         layout: { visibility: 'none' },
       },
       {
@@ -51,7 +51,7 @@ export function makeStyle() {
         type: 'raster',
         source: 'osm',
         minzoom: 0,
-        maxzoom: 19,
+        maxzoom: 18,
         layout: { visibility: 'none' },
       },
     ],
