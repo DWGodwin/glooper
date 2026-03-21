@@ -45,7 +45,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173` in your browser.
+Open `http://localhost:5173/glooper/` in your browser.
 
 Pre-computed assets (chips, CAMs, SAM embeddings) are included in the repo. The `pipeline/` directory contains the offline Python scripts that generated them — you don't need to run these to try the demo.
 
