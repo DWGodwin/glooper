@@ -1,5 +1,7 @@
 # Glooper: The Geospatial Human-in-the-Loop Pipeline for Remote Sensing ML
 
+![glooper_demo](https://github.com/user-attachments/assets/b2854e49-2db5-4a1d-b38c-9b7b0ef764a4)
+
 High quality label data is key for making maps with machine learning. Creating high quality label data is labor-intensive, monotonous, and tricky to do well. Feedback is on the order of weeks, and projects die in the back-and-forth on data quality. What would it take to **look forward to** a labeling campaign? What would it take to be able to come back to a mapping project and make it even better?
 
 What if you could start with the cheapest possible label — "this tile has solar panels, this one doesn't" — and bootstrap your way to pixel-level segmentation masks in a day instead of a week or a month? Instead of wading through mind-numbingly easy examples that you suspect add nothing to model performance, you could be annotating most challenging, highest-value samples first and seeing their impact in real time. Domain expertise should be spent on the hard conceptual problems that people want to work on, not on precision clicking.
