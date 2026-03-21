@@ -35,8 +35,8 @@ function App() {
           },
         ],
       },
-      center: [-117.1, 33.1],
-      zoom: 12,
+      center: [-71.82, 42.25],
+      zoom: 14,
     })
 
     map.current.addControl(new maplibregl.NavigationControl(), 'top-right')
