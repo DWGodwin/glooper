@@ -1,0 +1,9 @@
+# pixi environments
+.pixi/*
+!.pixi/config.toml
+
+# model weights (downloaded at runtime)
+models/
+
+# intermediate features
+features/
