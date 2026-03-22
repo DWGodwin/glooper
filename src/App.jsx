@@ -2,7 +2,7 @@ import { useRef, useEffect, useState, useCallback } from 'react'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import './App.css'
-import { initSamDecoder, runSamDecoder, maskToDataURL } from './sam'
+import { initSamDecoder, isDecoderReady, runSamDecoder, maskToDataURL } from './sam'
 import { loadNpy } from './npy'
 import { BASEMAP_KEYS, makeStyle } from './mapStyle'
 import StatusBar from './StatusBar'
@@ -156,6 +156,7 @@ function App() {
 
     async function handleSegClick(lon, lat, label) {
       if (!activeChipId || !activeEmbedding || !activeChipCorners) return
+      if (!isDecoderReady()) return
 
       const pix = lonLatToPixel(lon, lat, activeChipCorners)
       if (!pix || pix.u < 0 || pix.u > 1 || pix.v < 0 || pix.v > 1) return

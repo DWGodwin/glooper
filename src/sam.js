@@ -5,12 +5,22 @@ let session = null
 /**
  * Initialize the SAM ONNX decoder session. Call once on app load.
  */
+let sessionReady = null
+
 export async function initSamDecoder() {
-  if (session) return session
-  session = await ort.InferenceSession.create(`${import.meta.env.BASE_URL}data/sam_decoder.onnx`)
-  console.log('SAM decoder inputs:', session.inputNames)
-  console.log('SAM decoder outputs:', session.outputNames)
-  return session
+  if (sessionReady) return sessionReady
+  sessionReady = ort.InferenceSession.create(`${import.meta.env.BASE_URL}data/sam_decoder.onnx`)
+    .then((s) => {
+      session = s
+      console.log('SAM decoder inputs:', session.inputNames)
+      console.log('SAM decoder outputs:', session.outputNames)
+      return session
+    })
+  return sessionReady
+}
+
+export function isDecoderReady() {
+  return session !== null
 }
 
 /**

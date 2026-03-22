@@ -18,7 +18,7 @@ function InfoPanel() {
       </button>
       <h2>Glooper Demo: Refining Labels</h2>
       <p className="info-subtitle">
-        High-quality segmentation from minimal supervision, running in your browser.
+        High-quality segmentation from minimal supervision, running in your browser. GitHub Repo: https://github.com/DWGodwin/glooper/
       </p>
 
       <div className="info-pipeline">
