@@ -7,12 +7,14 @@ import { loadNpy } from './npy'
 import { BASEMAP_KEYS, makeStyle } from './mapStyle'
 import StatusBar from './StatusBar'
 import BasemapPicker from './BasemapPicker'
+import ViewNav from './ViewNav'
 import InfoPanel from './InfoPanel'
 
 function App() {
   const mapContainer = useRef(null)
   const map = useRef(null)
   const initialized = useRef(false)
+  const [activeView, setActiveView] = useState('define-area')
   const [activeBasemap, setActiveBasemap] = useState('imagery')
   const [camVisible, setCamVisible] = useState(false)
   const camVisibleRef = useRef(false)
@@ -433,7 +435,7 @@ function App() {
     },
     []
   )
-
+  
   const toggleCam = useCallback(() => {
     setCamVisible((prev) => {
       const next = !prev
@@ -448,23 +450,31 @@ function App() {
 
   return (
     <div className="map-wrap">
+      
+      <ViewNav
+        activeView={activeView}
+        onActiveViewChange={setActiveView}
+      />
+      
       <div ref={mapContainer} className="map-container" />
-
-      <InfoPanel />
-
-      <StatusBar
-        selectedChipId={selectedChipId}
-        clickPoints={clickPoints}
-        maskIndex={maskIndex}
-        maskResults={maskResults}
-      />
-
-      <BasemapPicker
-        activeBasemap={activeBasemap}
-        onBasemapChange={switchBasemap}
-        camVisible={camVisible}
-        onToggleCam={toggleCam}
-      />
+      
+      {activeView === 'define-area' && <div />}
+      {activeView === 'labeling' && 
+          <div>
+            <StatusBar
+              selectedChipId={selectedChipId}
+              clickPoints={clickPoints}
+              maskIndex={maskIndex}
+              maskResults={maskResults}
+            />
+            <BasemapPicker
+              activeBasemap={activeBasemap}
+              onBasemapChange={switchBasemap}
+              camVisible={camVisible}
+              onToggleCam={toggleCam}
+            />
+          </div>
+      }
     </div>
 )
 }
