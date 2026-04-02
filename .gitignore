@@ -24,3 +24,5 @@ dist-ssr
 *.sw?
 
 CLAUDE.md
+.claude/
+.agents/

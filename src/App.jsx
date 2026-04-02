@@ -2,17 +2,25 @@ import { useRef, useEffect, useState, useCallback } from 'react'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import './App.css'
+import proj4 from 'proj4'
 import { initSamDecoder, isDecoderReady, runSamDecoder, maskToDataURL } from './sam'
 import { loadNpy } from './npy'
 import { BASEMAP_KEYS, makeStyle } from './mapStyle'
 import StatusBar from './StatusBar'
 import BasemapPicker from './BasemapPicker'
+import ViewNav from './ViewNav'
 import InfoPanel from './InfoPanel'
+import DefineArea from './DefineArea'
+
+const IS_DEMO = import.meta.env.VITE_DATA_SOURCE !== 'api'
+
+proj4.defs('EPSG:32619', '+proj=utm +zone=19 +datum=WGS84 +units=m +no_defs')
 
 function App() {
   const mapContainer = useRef(null)
   const map = useRef(null)
   const initialized = useRef(false)
+  const [activeView, setActiveView] = useState(IS_DEMO ? 'labeling' : 'define-area')
   const [activeBasemap, setActiveBasemap] = useState('imagery')
   const [camVisible, setCamVisible] = useState(false)
   const camVisibleRef = useRef(false)
@@ -21,8 +29,29 @@ function App() {
   const [maskIndex, setMaskIndex] = useState(-1)
   const [clickPoints, setClickPoints] = useState([]) // { x, y, label, lon, lat }
   const [selectedChipId, setSelectedChipId] = useState(null)
+  const [activeSplit, setActiveSplit] = useState('train')
+  const [drawMode, setDrawMode] = useState(false)
+  const drawModeRef = useRef(false)
+  const [studyAreas, setStudyAreas] = useState([]) // GeoJSON Features
+  const activeSplitRef = useRef('train')
 
   useEffect(() => { maskResultsRef.current = maskResults }, [maskResults])
+  useEffect(() => { drawModeRef.current = drawMode }, [drawMode])
+  useEffect(() => { activeSplitRef.current = activeSplit }, [activeSplit])
+  useEffect(() => {
+    const m = map.current
+    if (!m) return
+    if (!drawMode) m.getCanvas().style.cursor = ''
+  }, [drawMode])
+
+  useEffect(() => {
+    const m = map.current
+    if (!m || !m.getSource('study-areas')) return
+    m.getSource('study-areas').setData({
+      type: 'FeatureCollection',
+      features: studyAreas,
+    })
+  }, [studyAreas])
 
   useEffect(() => {
     if (initialized.current) return
@@ -45,6 +74,8 @@ function App() {
     let lastLowResMask = null     // 256*256 logit mask from previous SAM run
     let pointMarkers = []         // MapLibre Marker instances
     let points = []               // { x, y, label, lon, lat } — mutable accumulator
+    let isDrawing = false
+    let drawStart = null          // { lng, lat }
 
     function removeOverlays() {
       for (const id of ['mask-overlay', 'cam-overlay', 'chip-overlay']) {
@@ -191,6 +222,65 @@ function App() {
       const featureById = {}
       for (const f of raw.features) featureById[f.properties.id] = f
 
+      m.addSource('study-areas', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      })
+      m.addLayer({
+        id: 'study-areas-fill',
+        type: 'fill',
+        source: 'study-areas',
+        paint: {
+          'fill-color': [
+            'match', ['get', 'split'],
+            'train', '#3b82f6',
+            'test', '#ef4444',
+            'validate', '#f59e0b',
+            '#888888',
+          ],
+          'fill-opacity': 0.15,
+        },
+      })
+      m.addLayer({
+        id: 'study-areas-outline',
+        type: 'line',
+        source: 'study-areas',
+        paint: {
+          'line-color': [
+            'match', ['get', 'split'],
+            'train', '#3b82f6',
+            'test', '#ef4444',
+            'validate', '#f59e0b',
+            '#888888',
+          ],
+          'line-width': 2,
+        },
+      })
+
+      m.addSource('draw-rect', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      })
+      m.addLayer({
+        id: 'draw-rect-fill',
+        type: 'fill',
+        source: 'draw-rect',
+        paint: {
+          'fill-color': '#3b82f6',
+          'fill-opacity': 0.15,
+        },
+      })
+      m.addLayer({
+        id: 'draw-rect-outline',
+        type: 'line',
+        source: 'draw-rect',
+        paint: {
+          'line-color': '#3b82f6',
+          'line-width': 2,
+          'line-dasharray': [4, 2],
+        },
+      })
+
       m.addSource('chips', { type: 'geojson', data: raw })
 
       m.addLayer({
@@ -222,6 +312,41 @@ function App() {
           'line-width': 1.5,
         },
       })
+
+      const CHIP_SIZE_M = 76.8
+
+      function computeGrid(sw, ne, split) {
+        const swUtm = proj4('EPSG:4326', 'EPSG:32619', sw)
+        const neUtm = proj4('EPSG:4326', 'EPSG:32619', ne)
+
+        const minE = Math.floor(swUtm[0] / CHIP_SIZE_M) * CHIP_SIZE_M
+        const minN = Math.floor(swUtm[1] / CHIP_SIZE_M) * CHIP_SIZE_M
+        const maxE = Math.ceil(neUtm[0] / CHIP_SIZE_M) * CHIP_SIZE_M
+        const maxN = Math.ceil(neUtm[1] / CHIP_SIZE_M) * CHIP_SIZE_M
+
+        const features = []
+        for (let e = minE; e < maxE; e += CHIP_SIZE_M) {
+          for (let n = minN; n < maxN; n += CHIP_SIZE_M) {
+            const sw_ll = proj4('EPSG:32619', 'EPSG:4326', [e, n])
+            const se_ll = proj4('EPSG:32619', 'EPSG:4326', [e + CHIP_SIZE_M, n])
+            const ne_ll = proj4('EPSG:32619', 'EPSG:4326', [e + CHIP_SIZE_M, n + CHIP_SIZE_M])
+            const nw_ll = proj4('EPSG:32619', 'EPSG:4326', [e, n + CHIP_SIZE_M])
+
+            features.push({
+              type: 'Feature',
+              geometry: {
+                type: 'Polygon',
+                coordinates: [[nw_ll, ne_ll, se_ll, sw_ll, nw_ll]],
+              },
+              properties: {
+                split,
+                id: `${e.toFixed(2)}e_${n.toFixed(2)}n`,
+              },
+            })
+          }
+        }
+        return features
+      }
 
       // Select a chip on click, or place a point if chip is already selected
       let selectingChip = false // guard to prevent click-through to point handler
@@ -303,6 +428,7 @@ function App() {
       }
 
       m.on('click', 'chips-fill', (e) => {
+        if (drawModeRef.current) return
         const chipId = e.features[0].properties.id
         if (chipId !== activeChipId) {
           // Selecting a new chip — block the general click handler
@@ -314,6 +440,7 @@ function App() {
 
       // Left click: positive point (only if not selecting a chip)
       m.on('click', (e) => {
+        if (drawModeRef.current) return
         if (selectingChip) {
           selectingChip = false
           return
@@ -330,6 +457,69 @@ function App() {
         const point = new maplibregl.Point(e.clientX - rect.left, e.clientY - rect.top)
         const coord = m.unproject(point)
         handleSegClick(coord.lng, coord.lat, 0)
+      })
+
+      // Draw mode: mousedown starts a rectangle
+      m.on('mousedown', (e) => {
+        if (!drawModeRef.current) return
+        e.preventDefault()
+        isDrawing = true
+        drawStart = { lng: e.lngLat.lng, lat: e.lngLat.lat }
+        m.dragPan.disable()
+        m.getCanvas().style.cursor = 'crosshair'
+      })
+
+      // Draw mode: mousemove updates the preview rectangle
+      m.on('mousemove', (e) => {
+        if (drawModeRef.current && !isDrawing) {
+          m.getCanvas().style.cursor = 'crosshair'
+        }
+
+        if (!isDrawing || !drawStart) return
+
+        const current = e.lngLat
+        const coords = [
+          [drawStart.lng, drawStart.lat],
+          [current.lng, drawStart.lat],
+          [current.lng, current.lat],
+          [drawStart.lng, current.lat],
+          [drawStart.lng, drawStart.lat],
+        ]
+        m.getSource('draw-rect').setData({
+          type: 'FeatureCollection',
+          features: [{
+            type: 'Feature',
+            geometry: { type: 'Polygon', coordinates: [coords] },
+            properties: {},
+          }],
+        })
+      })
+
+      // Draw mode: mouseup finalizes the rectangle and computes the chip grid
+      m.on('mouseup', (e) => {
+        if (!isDrawing || !drawStart) return
+        isDrawing = false
+
+        const end = e.lngLat
+        const sw = [Math.min(drawStart.lng, end.lng), Math.min(drawStart.lat, end.lat)]
+        const ne = [Math.max(drawStart.lng, end.lng), Math.max(drawStart.lat, end.lat)]
+
+        drawStart = null
+        m.dragPan.enable()
+
+        // Clear draw preview
+        m.getSource('draw-rect').setData({ type: 'FeatureCollection', features: [] })
+
+        // Skip tiny accidental clicks (less than ~5px)
+        const swPx = m.project(sw)
+        const nePx = m.project(ne)
+        if (Math.abs(nePx.x - swPx.x) < 5 && Math.abs(nePx.y - swPx.y) < 5) return
+
+        const gridFeatures = computeGrid(sw, ne, activeSplitRef.current)
+        setStudyAreas((prev) => [...prev, ...gridFeatures])
+
+        // Auto-exit draw mode
+        setDrawMode(false)
       })
 
       // Re-run SAM with current points (after point removal)
@@ -413,10 +603,12 @@ function App() {
       document.addEventListener('keydown', handleKeyDown)
 
       m.on('mousemove', 'chips-fill', (e) => {
+        if (drawModeRef.current) return
         const chipId = e.features[0].properties.id
         m.getCanvas().style.cursor = chipId === activeChipId ? 'crosshair' : 'pointer'
       })
       m.on('mouseleave', 'chips-fill', () => {
+        if (drawModeRef.current) return
         m.getCanvas().style.cursor = ''
       })
     })
@@ -433,7 +625,7 @@ function App() {
     },
     []
   )
-
+  
   const toggleCam = useCallback(() => {
     setCamVisible((prev) => {
       const next = !prev
@@ -448,23 +640,41 @@ function App() {
 
   return (
     <div className="map-wrap">
+      
+      {!IS_DEMO &&
+        <ViewNav
+          activeView={activeView}
+          onActiveViewChange={setActiveView}
+        />
+      }
+      
       <div ref={mapContainer} className="map-container" />
-
-      <InfoPanel />
-
-      <StatusBar
-        selectedChipId={selectedChipId}
-        clickPoints={clickPoints}
-        maskIndex={maskIndex}
-        maskResults={maskResults}
-      />
-
-      <BasemapPicker
-        activeBasemap={activeBasemap}
-        onBasemapChange={switchBasemap}
-        camVisible={camVisible}
-        onToggleCam={toggleCam}
-      />
+      
+      {activeView === 'define-area' &&
+        <DefineArea
+          drawMode={drawMode}
+          onToggleDraw={() => setDrawMode((prev) => !prev)}
+          activeSplit={activeSplit}
+          onSplitChange={setActiveSplit}
+        />
+      }
+      {activeView === 'labeling' &&
+          <div>
+            {IS_DEMO && <InfoPanel />}
+            <StatusBar
+              selectedChipId={selectedChipId}
+              clickPoints={clickPoints}
+              maskIndex={maskIndex}
+              maskResults={maskResults}
+            />
+            <BasemapPicker
+              activeBasemap={activeBasemap}
+              onBasemapChange={switchBasemap}
+              camVisible={camVisible}
+              onToggleCam={toggleCam}
+            />
+          </div>
+      }
     </div>
 )
 }
