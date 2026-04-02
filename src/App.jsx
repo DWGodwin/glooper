@@ -11,6 +11,7 @@ import BasemapPicker from './BasemapPicker'
 import ViewNav from './ViewNav'
 import InfoPanel from './InfoPanel'
 import DefineArea from './DefineArea'
+import { data } from './data.js'
 
 const IS_DEMO = import.meta.env.VITE_DATA_SOURCE !== 'api'
 
@@ -214,7 +215,7 @@ function App() {
     m.on('load', async () => {
       initSamDecoder().then(() => console.log('SAM decoder ready'))
 
-      const resp = await fetch(`${import.meta.env.BASE_URL}data/metadata.geojson`)
+      const resp = await fetch(data.chipsUrl())
       const raw = await resp.json()
 
       // Index original features by chip ID so we can look up exact coordinates
@@ -365,7 +366,7 @@ function App() {
 
         m.addSource('chip-overlay', {
           type: 'image',
-          url: `${import.meta.env.BASE_URL}data/chips/${chipId}.png`,
+          url: data.chipImageUrl(chipId),
           coordinates: imageCoords,
         })
         m.addLayer({
@@ -376,7 +377,7 @@ function App() {
 
         m.addSource('cam-overlay', {
           type: 'image',
-          url: `${import.meta.env.BASE_URL}data/cams/${chipId}.png`,
+          url: data.chipCamUrl(chipId),
           coordinates: imageCoords,
         })
         m.addLayer({
@@ -420,8 +421,8 @@ function App() {
 
         // Load embedding and raw CAM in parallel
         const [embedding, camRaw] = await Promise.all([
-          loadNpy(`${import.meta.env.BASE_URL}data/sam_embeddings/${chipId}.npy`),
-          loadNpy(`${import.meta.env.BASE_URL}data/cams_raw/${chipId}.npy`).catch(() => null),
+          loadNpy(data.embeddingUrl(chipId)),
+          loadNpy(data.chipCamRawUrl(chipId)).catch(() => null),
         ])
         activeEmbedding = embedding
         activeCamMask = camRaw ? camToMaskInput(camRaw) : null
