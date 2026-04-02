@@ -516,8 +516,26 @@ function App() {
         const nePx = m.project(ne)
         if (Math.abs(nePx.x - swPx.x) < 5 && Math.abs(nePx.y - swPx.y) < 5) return
 
-        const gridFeatures = computeGrid(sw, ne, activeSplitRef.current)
-        setStudyAreas((prev) => [...prev, ...gridFeatures])
+        const split = activeSplitRef.current
+
+        if (IS_DEMO) {
+          const gridFeatures = computeGrid(sw, ne, split)
+          setStudyAreas((prev) => [...prev, ...gridFeatures])
+        } else {
+          data.createStudyArea({ sw, ne }, split).then((geojson) => {
+            if (geojson.features) {
+              setStudyAreas((prev) => [...prev, ...geojson.features])
+              // Refresh chips source so new chips appear on the map
+              fetch(data.chipsUrl())
+                .then((r) => r.json())
+                .then((chipData) => {
+                  if (m.getSource('chips')) m.getSource('chips').setData(chipData)
+                  // Update featureById index
+                  for (const f of chipData.features) featureById[f.properties.id] = f
+                })
+            }
+          })
+        }
 
         // Auto-exit draw mode
         setDrawMode(false)

@@ -9,4 +9,14 @@ export const data = {
   chipCamRawUrl: (id) => STATIC ? `${BASE}data/cams_raw/${id}.npy`       : `${API}/api/chips/${id}/cam-raw`,
   embeddingUrl:  (id) => STATIC ? `${BASE}data/sam_embeddings/${id}.npy` : `${API}/api/chips/${id}/embedding`,
   samDecoderUrl: ()   => STATIC ? `${BASE}data/sam_decoder.onnx`         : `${API}/api/models/sam-decoder`,
+  createStudyArea: (bbox, split) => fetch(`${API}/api/study-areas`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bbox, split }),
+  }).then(r => r.json()),
+  deleteChips: (ids) => fetch(`${API}/api/chips`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  }).then(r => r.json()),
 }
