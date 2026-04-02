@@ -212,3 +212,49 @@
   align-items: center;
   justify-content: center;
 }
+
+/* Define Area panel */
+.define-area-panel {
+  position: absolute;
+  bottom: 24px;
+  left: 12px;
+  display: flex;
+  gap: 8px;
+  z-index: 1;
+}
+
+.split-selector {
+  display: flex;
+  gap: 4px;
+}
+
+.split-btn {
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  text-transform: capitalize;
+}
+
+.split-train.active { background: rgba(59, 130, 246, 0.8); border-color: #3b82f6; }
+.split-test.active { background: rgba(239, 68, 68, 0.8); border-color: #ef4444; }
+.split-validate.active { background: rgba(245, 158, 11, 0.8); border-color: #f59e0b; }
+
+.draw-toggle {
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.draw-toggle.active {
+  background: rgba(255, 255, 255, 0.9);
+  color: #000;
+  border-color: rgba(255, 255, 255, 0.9);
+}
