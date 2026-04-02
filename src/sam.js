@@ -1,4 +1,5 @@
 import * as ort from 'onnxruntime-web'
+import { data } from './data.js'
 
 let session = null
 
@@ -9,7 +10,7 @@ let sessionReady = null
 
 export async function initSamDecoder() {
   if (sessionReady) return sessionReady
-  sessionReady = ort.InferenceSession.create(`${import.meta.env.BASE_URL}data/sam_decoder.onnx`)
+  sessionReady = ort.InferenceSession.create(data.samDecoderUrl())
     .then((s) => {
       session = s
       console.log('SAM decoder inputs:', session.inputNames)
