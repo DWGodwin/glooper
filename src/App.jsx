@@ -42,7 +42,13 @@ function App() {
   useEffect(() => {
     const m = map.current
     if (!m) return
-    if (!drawMode) m.getCanvas().style.cursor = ''
+    if (drawMode) {
+      m.dragPan.disable()
+      m.getCanvas().style.cursor = 'crosshair'
+    } else {
+      m.dragPan.enable()
+      m.getCanvas().style.cursor = ''
+    }
   }, [drawMode])
 
   useEffect(() => {
@@ -466,8 +472,6 @@ function App() {
         e.preventDefault()
         isDrawing = true
         drawStart = { lng: e.lngLat.lng, lat: e.lngLat.lat }
-        m.dragPan.disable()
-        m.getCanvas().style.cursor = 'crosshair'
       })
 
       // Draw mode: mousemove updates the preview rectangle
@@ -506,7 +510,6 @@ function App() {
         const ne = [Math.max(drawStart.lng, end.lng), Math.max(drawStart.lat, end.lat)]
 
         drawStart = null
-        m.dragPan.enable()
 
         // Clear draw preview
         m.getSource('draw-rect').setData({ type: 'FeatureCollection', features: [] })
@@ -516,8 +519,26 @@ function App() {
         const nePx = m.project(ne)
         if (Math.abs(nePx.x - swPx.x) < 5 && Math.abs(nePx.y - swPx.y) < 5) return
 
-        const gridFeatures = computeGrid(sw, ne, activeSplitRef.current)
-        setStudyAreas((prev) => [...prev, ...gridFeatures])
+        const split = activeSplitRef.current
+
+        if (IS_DEMO) {
+          const gridFeatures = computeGrid(sw, ne, split)
+          setStudyAreas((prev) => [...prev, ...gridFeatures])
+        } else {
+          data.createStudyArea({ sw, ne }, split).then((geojson) => {
+            if (geojson.features) {
+              setStudyAreas((prev) => [...prev, ...geojson.features])
+              // Refresh chips source so new chips appear on the map
+              fetch(data.chipsUrl())
+                .then((r) => r.json())
+                .then((chipData) => {
+                  if (m.getSource('chips')) m.getSource('chips').setData(chipData)
+                  // Update featureById index
+                  for (const f of chipData.features) featureById[f.properties.id] = f
+                })
+            }
+          })
+        }
 
         // Auto-exit draw mode
         setDrawMode(false)

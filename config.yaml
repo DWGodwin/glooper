@@ -1,0 +1,5 @@
+chip_size_m: 76.8
+crs: "EPSG:32619"
+max_chips_per_request: 10000
+db_path: "data/glooper.duckdb"
+data_dir: "public/data"
