@@ -42,7 +42,13 @@ function App() {
   useEffect(() => {
     const m = map.current
     if (!m) return
-    if (!drawMode) m.getCanvas().style.cursor = ''
+    if (drawMode) {
+      m.dragPan.disable()
+      m.getCanvas().style.cursor = 'crosshair'
+    } else {
+      m.dragPan.enable()
+      m.getCanvas().style.cursor = ''
+    }
   }, [drawMode])
 
   useEffect(() => {
@@ -466,8 +472,6 @@ function App() {
         e.preventDefault()
         isDrawing = true
         drawStart = { lng: e.lngLat.lng, lat: e.lngLat.lat }
-        m.dragPan.disable()
-        m.getCanvas().style.cursor = 'crosshair'
       })
 
       // Draw mode: mousemove updates the preview rectangle
@@ -506,7 +510,6 @@ function App() {
         const ne = [Math.max(drawStart.lng, end.lng), Math.max(drawStart.lat, end.lat)]
 
         drawStart = null
-        m.dragPan.enable()
 
         // Clear draw preview
         m.getSource('draw-rect').setData({ type: 'FeatureCollection', features: [] })
