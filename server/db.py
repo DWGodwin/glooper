@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import duckdb
@@ -13,12 +14,14 @@ def init_db():
     db_path = Path(cfg["db_path"])
     db_path.parent.mkdir(parents=True, exist_ok=True)
     _conn = duckdb.connect(str(db_path))
+    _conn.execute("INSTALL spatial")
+    _conn.execute("LOAD spatial")
     _conn.execute("""
         CREATE TABLE IF NOT EXISTS chips (
             id TEXT PRIMARY KEY,
             split TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'unlabeled',
-            geometry_wkt TEXT NOT NULL
+            geometry GEOMETRY NOT NULL
         )
     """)
 
@@ -29,21 +32,25 @@ def get_db():
     return _conn
 
 
-def insert_chips(chips):
+def insert_chips(chips, crs):
     """Batch insert chips, skipping duplicates."""
     conn = get_db()
     for chip in chips:
         conn.execute(
-            "INSERT OR IGNORE INTO chips (id, split, status, geometry_wkt) VALUES (?, ?, 'unlabeled', ?)",
+            "INSERT OR IGNORE INTO chips (id, split, status, geometry) VALUES (?, ?, 'unlabeled', ST_GeomFromText(?))",
             [chip["id"], chip["split"], chip["geometry_wkt"]],
         )
 
 
 def get_all_chips():
     conn = get_db()
-    rows = conn.execute("SELECT id, split, status, geometry_wkt FROM chips").fetchall()
+    cfg = get_config()
+    crs = cfg["crs"]
+    rows = conn.execute(
+        f"SELECT id, split, status, ST_AsGeoJSON(ST_FlipCoordinates(ST_Transform(geometry, '{crs}', 'EPSG:4326'))) AS geojson FROM chips"
+    ).fetchall()
     return [
-        {"id": r[0], "split": r[1], "status": r[2], "geometry_wkt": r[3]}
+        {"id": r[0], "split": r[1], "status": r[2], "geojson": json.loads(r[3])}
         for r in rows
     ]
 

@@ -35,25 +35,6 @@ def create_study_area(req: CreateStudyAreaRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    insert_chips(chips)
+    insert_chips(chips, crs=cfg["crs"])
 
-    features = []
-    for chip in chips:
-        features.append({
-            "type": "Feature",
-            "properties": {
-                "id": chip["id"],
-                "status": "unlabeled",
-                "split": chip["split"],
-                "label": None,
-            },
-            "geometry": {
-                "type": "Polygon",
-                "coordinates": [chip["geojson_coords"]],
-            },
-        })
-
-    return {
-        "type": "FeatureCollection",
-        "features": features,
-    }
+    return {"ok": True, "count": len(chips)}

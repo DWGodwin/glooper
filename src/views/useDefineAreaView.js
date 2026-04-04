@@ -1,49 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import proj4 from 'proj4'
 import { data } from '../data.js'
-
-const IS_DEMO = import.meta.env.VITE_DATA_SOURCE !== 'api'
-const CHIP_SIZE_M = 76.8
-
-proj4.defs('EPSG:32619', '+proj=utm +zone=19 +datum=WGS84 +units=m +no_defs')
-
-function computeGrid(sw, ne, split) {
-  const swUtm = proj4('EPSG:4326', 'EPSG:32619', sw)
-  const neUtm = proj4('EPSG:4326', 'EPSG:32619', ne)
-
-  const minE = Math.floor(swUtm[0] / CHIP_SIZE_M) * CHIP_SIZE_M
-  const minN = Math.floor(swUtm[1] / CHIP_SIZE_M) * CHIP_SIZE_M
-  const maxE = Math.ceil(neUtm[0] / CHIP_SIZE_M) * CHIP_SIZE_M
-  const maxN = Math.ceil(neUtm[1] / CHIP_SIZE_M) * CHIP_SIZE_M
-
-  const features = []
-  for (let e = minE; e < maxE; e += CHIP_SIZE_M) {
-    for (let n = minN; n < maxN; n += CHIP_SIZE_M) {
-      const sw_ll = proj4('EPSG:32619', 'EPSG:4326', [e, n])
-      const se_ll = proj4('EPSG:32619', 'EPSG:4326', [e + CHIP_SIZE_M, n])
-      const ne_ll = proj4('EPSG:32619', 'EPSG:4326', [e + CHIP_SIZE_M, n + CHIP_SIZE_M])
-      const nw_ll = proj4('EPSG:32619', 'EPSG:4326', [e, n + CHIP_SIZE_M])
-
-      features.push({
-        type: 'Feature',
-        geometry: {
-          type: 'Polygon',
-          coordinates: [[nw_ll, ne_ll, se_ll, sw_ll, nw_ll]],
-        },
-        properties: {
-          split,
-          id: `${e.toFixed(2)}e_${n.toFixed(2)}n`,
-        },
-      })
-    }
-  }
-  return features
-}
 
 export function useDefineAreaView({ active, map, chipGrid }) {
   const [drawMode, setDrawMode] = useState(false)
   const [activeSplit, setActiveSplit] = useState('train')
-  const [studyAreas, setStudyAreas] = useState([])
 
   const drawModeRef = useRef(false)
   const activeSplitRef = useRef('train')
@@ -67,54 +27,10 @@ export function useDefineAreaView({ active, map, chipGrid }) {
     }
   }, [map, drawMode])
 
-  // Sync study areas to map source
-  useEffect(() => {
-    if (!map || !map.getSource('study-areas')) return
-    map.getSource('study-areas').setData({
-      type: 'FeatureCollection',
-      features: studyAreas,
-    })
-  }, [map, studyAreas])
-
-  // Add sources/layers and event handlers
+  // Add draw-rect source/layer
   useEffect(() => {
     if (!map || initializedRef.current) return
     initializedRef.current = true
-
-    map.addSource('study-areas', {
-      type: 'geojson',
-      data: { type: 'FeatureCollection', features: [] },
-    })
-    map.addLayer({
-      id: 'study-areas-fill',
-      type: 'fill',
-      source: 'study-areas',
-      paint: {
-        'fill-color': [
-          'match', ['get', 'split'],
-          'train', '#3b82f6',
-          'test', '#ef4444',
-          'validate', '#f59e0b',
-          '#888888',
-        ],
-        'fill-opacity': 0.15,
-      },
-    })
-    map.addLayer({
-      id: 'study-areas-outline',
-      type: 'line',
-      source: 'study-areas',
-      paint: {
-        'line-color': [
-          'match', ['get', 'split'],
-          'train', '#3b82f6',
-          'test', '#ef4444',
-          'validate', '#f59e0b',
-          '#888888',
-        ],
-        'line-width': 2,
-      },
-    })
 
     map.addSource('draw-rect', {
       type: 'geojson',
@@ -199,17 +115,9 @@ export function useDefineAreaView({ active, map, chipGrid }) {
 
       const split = activeSplitRef.current
 
-      if (IS_DEMO) {
-        const gridFeatures = computeGrid(sw, ne, split)
-        setStudyAreas((prev) => [...prev, ...gridFeatures])
-      } else {
-        data.createStudyArea({ sw, ne }, split).then((geojson) => {
-          if (geojson.features) {
-            setStudyAreas((prev) => [...prev, ...geojson.features])
-            chipGrid.refreshChips()
-          }
-        })
-      }
+      data.createStudyArea({ sw, ne }, split).then(() => {
+        chipGrid.refreshChips()
+      })
 
       // Auto-exit draw mode
       setDrawMode(false)
