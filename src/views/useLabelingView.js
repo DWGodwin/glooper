@@ -104,10 +104,11 @@ export function useLabelingView({ active, map, featureById }) {
       setSelectedChipId(null)
       if (map.getLayer('chips-outline')) {
         map.setPaintProperty('chips-outline', 'line-color', [
-          'case',
-          ['==', ['get', 'label'], 'present'],
-          '#22c55e',
-          '#ef4444',
+          'match', ['get', 'split'],
+          'train', '#3b82f6',
+          'test', '#ef4444',
+          'validate', '#f59e0b',
+          '#888888',
         ])
         map.setPaintProperty('chips-outline', 'line-width', 1.5)
       }
@@ -221,11 +222,11 @@ export function useLabelingView({ active, map, featureById }) {
         'case',
         ['==', ['get', 'id'], chipId],
         '#facc15',
-        [
-          'case',
-          ['==', ['get', 'label'], 'present'],
-          '#22c55e',
-          '#ef4444',
+        ['match', ['get', 'split'],
+          'train', '#3b82f6',
+          'test', '#ef4444',
+          'validate', '#f59e0b',
+          '#888888',
         ],
       ])
       map.setPaintProperty('chips-outline', 'line-width', [

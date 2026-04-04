@@ -35,10 +35,11 @@ export function useChipGrid(map) {
       source: 'chips',
       paint: {
         'fill-color': [
-          'case',
-          ['==', ['get', 'label'], 'present'],
-          '#22c55e',
-          '#ef4444',
+          'match', ['get', 'split'],
+          'train', '#3b82f6',
+          'test', '#ef4444',
+          'validate', '#f59e0b',
+          '#888888',
         ],
         'fill-opacity': 0.15,
       },
@@ -50,10 +51,11 @@ export function useChipGrid(map) {
       source: 'chips',
       paint: {
         'line-color': [
-          'case',
-          ['==', ['get', 'label'], 'present'],
-          '#22c55e',
-          '#ef4444',
+          'match', ['get', 'split'],
+          'train', '#3b82f6',
+          'test', '#ef4444',
+          'validate', '#f59e0b',
+          '#888888',
         ],
         'line-width': 1.5,
       },
