@@ -14,6 +14,7 @@ export const data = {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ bbox, split }),
   }).then(r => r.json()),
+  prefetchStatus: (jobId) => fetch(`${API}/api/prefetch/${jobId}`).then(r => r.json()),
   deleteChips: (ids) => fetch(`${API}/api/chips`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },

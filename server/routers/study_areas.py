@@ -1,4 +1,5 @@
 from typing import Literal
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -6,6 +7,7 @@ from pydantic import BaseModel
 from server.config import get_config
 from server.db import insert_chips
 from server.grid import compute_grid
+from server.prefetch import start_prefetch, get_job_status
 
 router = APIRouter(prefix="/api")
 
@@ -37,4 +39,15 @@ def create_study_area(req: CreateStudyAreaRequest):
 
     insert_chips(chips, crs=cfg["crs"])
 
-    return {"ok": True, "count": len(chips)}
+    job_id = uuid4().hex[:12]
+    start_prefetch(job_id, chips, crs=cfg["crs"])
+
+    return {"ok": True, "count": len(chips), "job_id": job_id}
+
+
+@router.get("/prefetch/{job_id}")
+def prefetch_status(job_id: str):
+    status = get_job_status(job_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail=f"Unknown job '{job_id}'")
+    return status

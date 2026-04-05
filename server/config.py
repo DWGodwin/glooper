@@ -11,6 +11,8 @@ DEFAULTS = {
     "max_chips_per_request": 10000,
     "db_path": "data/glooper.duckdb",
     "data_dir": "public/data",
+    "imagery_provider": "static",
+    "imagery_provider_config": {},
 }
 
 

@@ -4,6 +4,7 @@ import { data } from '../data.js'
 export function useDefineAreaView({ active, map, chipGrid }) {
   const [drawMode, setDrawMode] = useState(false)
   const [activeSplit, setActiveSplit] = useState('train')
+  const [prefetchJob, setPrefetchJob] = useState(null)
 
   const drawModeRef = useRef(false)
   const activeSplitRef = useRef('train')
@@ -115,8 +116,11 @@ export function useDefineAreaView({ active, map, chipGrid }) {
 
       const split = activeSplitRef.current
 
-      data.createStudyArea({ sw, ne }, split).then(() => {
+      data.createStudyArea({ sw, ne }, split).then((res) => {
         chipGrid.refreshChips()
+        if (res.job_id) {
+          setPrefetchJob({ jobId: res.job_id, total: res.count, done: 0, failed: 0 })
+        }
       })
 
       // Auto-exit draw mode
@@ -134,6 +138,21 @@ export function useDefineAreaView({ active, map, chipGrid }) {
     }
   }, [map, active, chipGrid])
 
+  // Poll prefetch status
+  const prefetchJobId = prefetchJob?.jobId
+  useEffect(() => {
+    if (!prefetchJobId) return
+    const interval = setInterval(() => {
+      data.prefetchStatus(prefetchJobId).then((status) => {
+        setPrefetchJob((prev) => prev && { ...prev, ...status })
+        if (status.done + status.failed >= status.total) {
+          clearInterval(interval)
+        }
+      })
+    }, 2000)
+    return () => clearInterval(interval)
+  }, [prefetchJobId])
+
   const toggleDraw = useCallback(() => {
     setDrawMode((prev) => !prev)
   }, [])
@@ -143,5 +162,6 @@ export function useDefineAreaView({ active, map, chipGrid }) {
     toggleDraw,
     activeSplit,
     setActiveSplit,
+    prefetchJob,
   }
 }

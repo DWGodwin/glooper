@@ -55,6 +55,18 @@ def get_all_chips():
     ]
 
 
+def get_chip_by_id(chip_id):
+    """Return a chip's id and geometry as WKT, or None if not found."""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT id, ST_AsText(geometry) AS geometry_wkt FROM chips WHERE id = ?",
+        [chip_id],
+    ).fetchall()
+    if not rows:
+        return None
+    return {"id": rows[0][0], "geometry_wkt": rows[0][1]}
+
+
 def delete_chips(ids):
     if not ids:
         return 0

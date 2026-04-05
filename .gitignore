@@ -24,6 +24,7 @@ dist-ssr
 *.sw?
 
 *__pycache__*
+.pixi/
 
 CLAUDE.md
 .claude/

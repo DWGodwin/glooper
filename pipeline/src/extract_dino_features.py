@@ -1,11 +1,9 @@
 """
 Step 1: Extract DINOv2 ViT-S/14 patch-level features from satellite image chips.
 
-Reads 512x512 RGB PNGs from public/data/chips/, runs each through DINOv2,
+Reads RGB PNGs from public/data/chips/, runs each through DINOv2,
 and saves the patch token features as .npy files to pipeline/features/.
 
-Each chip produces a (1369, 384) array: 37x37 patch tokens, each 384-dim.
-(512px / 14px_per_patch = 36.57, DINOv2 handles this as 37x37 = 1369 patches)
 """
 
 import sys
