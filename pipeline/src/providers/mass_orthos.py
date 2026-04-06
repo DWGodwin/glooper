@@ -119,7 +119,7 @@ class MassOrthosProvider:
 
 
 def create(config: dict) -> MassOrthosProvider:
-    year = config.get("year", 2021)
+    year = config.get("year", 2023)
     cache_dir = config.get("cache_dir", "data/mass_orthos")
     chip_size = config.get("chip_size", 448)
     return MassOrthosProvider(year, cache_dir, chip_size)

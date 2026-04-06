@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from server.config import get_config
 from server.db import insert_chips
 from server.grid import compute_grid
-from server.prefetch import start_prefetch, get_job_status
+from server.worker_client import WorkerUnavailable, start_batch, get_job_status
 
 router = APIRouter(prefix="/api")
 
@@ -40,14 +40,21 @@ def create_study_area(req: CreateStudyAreaRequest):
     insert_chips(chips, crs=cfg["crs"])
 
     job_id = uuid4().hex[:12]
-    start_prefetch(job_id, chips, crs=cfg["crs"])
+    try:
+        start_batch(job_id, chips, crs=cfg["crs"])
+    except WorkerUnavailable:
+        return {"ok": True, "count": len(chips), "job_id": None,
+                "warning": "Chip worker unavailable — chips inserted but not prefetched"}
 
     return {"ok": True, "count": len(chips), "job_id": job_id}
 
 
 @router.get("/prefetch/{job_id}")
 def prefetch_status(job_id: str):
-    status = get_job_status(job_id)
-    if status is None:
-        raise HTTPException(status_code=404, detail=f"Unknown job '{job_id}'")
+    try:
+        status = get_job_status(job_id)
+    except WorkerUnavailable:
+        raise HTTPException(status_code=503, detail="Chip worker unavailable")
+    except RuntimeError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     return status

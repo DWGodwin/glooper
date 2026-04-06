@@ -1,11 +1,17 @@
-chip_size_m: 76.8
+chip_size_m: 67.2
 crs: "EPSG:32619"
 max_chips_per_request: 10000
 db_path: "data/glooper.duckdb"
 data_dir: "public/data"
 
-# imagery_provider: static
+# Server: chip worker connection
+worker_host: "localhost"
+worker_port: 9100
+
+# Pipeline: imagery provider (read by the chip worker)
 imagery_provider: mass_orthos
+imagery_provider_config:
+  year: 2023
 # imagery_provider: cog
 # imagery_provider_config:
 #   cog_path: /path/to/imagery.tif
