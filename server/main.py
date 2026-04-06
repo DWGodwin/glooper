@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from server.db import init_db
+from server.providers import init_provider
 from server.routers import chips, study_areas
 
 app = FastAPI(title="Glooper")
@@ -20,6 +21,7 @@ app.include_router(chips.router)
 @app.on_event("startup")
 def startup():
     init_db()
+    init_provider()
 
 
 if __name__ == "__main__":

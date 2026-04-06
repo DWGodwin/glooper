@@ -192,6 +192,7 @@ export function useLabelingView({ active, map, featureById }) {
         id: 'chip-overlay',
         type: 'raster',
         source: 'chip-overlay',
+        paint: { 'raster-resampling': 'nearest' },
       })
 
       map.addSource('cam-overlay', {

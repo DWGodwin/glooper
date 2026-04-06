@@ -6,11 +6,13 @@ import yaml
 _config = None
 
 DEFAULTS = {
-    "chip_size_m": 76.8,
+    "chip_size_m": 67.2,
     "crs": "EPSG:32619",
     "max_chips_per_request": 10000,
     "db_path": "data/glooper.duckdb",
     "data_dir": "public/data",
+    "worker_host": "localhost",
+    "worker_port": 9100,
 }
 
 

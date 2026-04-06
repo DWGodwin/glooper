@@ -34,6 +34,7 @@ function AppInner() {
           onToggleDraw={defineArea.toggleDraw}
           activeSplit={defineArea.activeSplit}
           onSplitChange={defineArea.setActiveSplit}
+          prefetchJob={defineArea.prefetchJob}
         />
       }
       {activeView === 'labeling' &&
