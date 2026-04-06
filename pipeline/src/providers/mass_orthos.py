@@ -9,6 +9,7 @@ Config keys:
 """
 
 import io
+import logging
 import threading
 from pathlib import Path
 
@@ -22,6 +23,8 @@ from rasterio.windows import from_bounds
 from rasterio.warp import transform_bounds
 from shapely import wkt
 
+logger = logging.getLogger(__name__)
+
 _CATALOG_URL = (
     "https://s3.us-east-1.amazonaws.com/download.massgis.digital.mass.gov/"
     "images/coq{year}_15cm_jp2/COQ{year}INDEX_POLY.zip"
@@ -33,10 +36,11 @@ _TILE_BASE_URL = (
 
 
 class MassOrthosProvider:
-    def __init__(self, year: int, cache_dir: str, chip_size: int = 448):
+    def __init__(self, year: int, cache_dir: str, crs: str, chip_size: int = 448):
         self._year = year
         self._cache_dir = Path(cache_dir)
         self._cache_dir.mkdir(parents=True, exist_ok=True)
+        self._crs = crs
         self._chip_size = chip_size
         self._catalog = None
         self._tile_locks: dict[str, threading.Lock] = {}
@@ -46,15 +50,15 @@ class MassOrthosProvider:
         if self._catalog is not None:
             return self._catalog
         url = _CATALOG_URL.format(year=self._year)
-        self._catalog = gpd.read_file(url)
+        catalog = gpd.read_file(url)
+        logger.info("Loaded catalog (%s), reprojecting to %s", catalog.crs, self._crs)
+        self._catalog = catalog.to_crs(self._crs)
         return self._catalog
 
-    def _find_overlapping_tiles(self, geom_wkt: str, crs: str) -> list[str]:
+    def _find_overlapping_tiles(self, geom_wkt: str) -> list[str]:
         """Return TILENAME values for ortho tiles overlapping the chip geometry."""
         catalog = self._load_catalog()
-        chip_gdf = gpd.GeoDataFrame(
-            geometry=[wkt.loads(geom_wkt)], crs=crs
-        ).to_crs(catalog.crs)
+        chip_gdf = gpd.GeoDataFrame(geometry=[wkt.loads(geom_wkt)], crs=self._crs)
         joined = gpd.sjoin(catalog, chip_gdf)
         return joined["TILENAME"].unique().tolist()
 
@@ -91,7 +95,7 @@ class MassOrthosProvider:
             return tif_path
 
     def get_chip_image(self, chip_id: str, geometry_wkt: str, crs: str) -> bytes:
-        tilenames = self._find_overlapping_tiles(geometry_wkt, crs)
+        tilenames = self._find_overlapping_tiles(geometry_wkt)
         if not tilenames:
             raise FileNotFoundError(
                 f"No MassGIS tiles overlap chip {chip_id}"
@@ -121,5 +125,6 @@ class MassOrthosProvider:
 def create(config: dict) -> MassOrthosProvider:
     year = config.get("year", 2023)
     cache_dir = config.get("cache_dir", "data/mass_orthos")
+    crs = config.get("crs", "EPSG:4326")
     chip_size = config.get("chip_size", 448)
-    return MassOrthosProvider(year, cache_dir, chip_size)
+    return MassOrthosProvider(year, cache_dir, crs, chip_size)

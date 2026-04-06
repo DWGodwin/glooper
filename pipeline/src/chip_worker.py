@@ -46,6 +46,7 @@ def _init_provider(config: dict):
     global _provider, _cache_dir
     name = config.get("imagery_provider", "static")
     provider_config = config.get("imagery_provider_config", {})
+    provider_config.setdefault("crs", config.get("crs", "EPSG:4326"))
     _provider = load_provider(name, provider_config)
 
     _cache_dir = Path(config.get("data_dir", "public/data")) / "chips"
@@ -141,7 +142,8 @@ def main():
     parser.add_argument("--port", type=int, default=None, help="Port to listen on")
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    log_level = os.environ.get("LOGLEVEL", "INFO").upper()
+    logging.basicConfig(level=getattr(logging, log_level, logging.INFO), format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
     config = _load_config()
     _init_provider(config)
