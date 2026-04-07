@@ -3,13 +3,50 @@ import maplibregl from 'maplibre-gl'
 import { initSamDecoder, isDecoderReady, runSamDecoder, maskToDataURL } from '../sam'
 import { loadNpy } from '../npy'
 import { data } from '../data.js'
+import { usePaintbrush } from '../hooks/usePaintbrush'
 
-// Convert lon/lat click to pixel coords within the chip
+// Convert lon/lat click to pixel coords within the chip using inverse
+// bilinear interpolation across all four corners.
 // corners: [TL, TR, BR, BL] in [lon, lat]
+// Pixel space: u goes right (TL→TR), v goes DOWN (TL→BL).
+// Lat increases upward, so the v-axis (TL→BL) has decreasing lat.
+// We set up the bilinear with pixel-space orientation:
+//   P = TL + (TR-TL)*u + (BL-TL)*v + (TL-TR-BL+BR)*u*v
 function lonLatToPixel(lon, lat, corners) {
-  const [tl, tr, , bl] = corners
-  const u = (lon - tl[0]) / (tr[0] - tl[0])
-  const v = (lat - tl[1]) / (bl[1] - tl[1])
+  const [tl, tr, br, bl] = corners
+  const ax = tl[0], ay = tl[1]
+  const bx = tr[0] - tl[0], by = tr[1] - tl[1]
+  const cx = bl[0] - tl[0], cy = bl[1] - tl[1]
+  const dx = br[0] - tr[0] - bl[0] + tl[0], dy = br[1] - tr[1] - bl[1] + tl[1]
+
+  const ex = lon - ax, ey = lat - ay
+
+  const cross = (ux, uy, vx, vy) => ux * vy - uy * vx
+
+  const A = cross(dx, dy, cx, cy)
+  const B = cross(bx, by, cx, cy) + cross(ex, ey, dx, dy)
+  const C = cross(ex, ey, bx, by)
+
+  let u, v
+  if (Math.abs(A) < 1e-12) {
+    v = B !== 0 ? -C / B : 0
+  } else {
+    const disc = B * B - 4 * A * C
+    if (disc < 0) return { u: -1, v: -1, x: -1, y: -1 }
+    const sq = Math.sqrt(disc)
+    const v1 = (-B + sq) / (2 * A)
+    const v2 = (-B - sq) / (2 * A)
+    v = (v1 >= -0.01 && v1 <= 1.01) ? v1 : v2
+  }
+
+  const denom = bx + dx * v
+  if (Math.abs(denom) > 1e-12) {
+    u = (ex - cx * v) / denom
+  } else {
+    const denomY = by + dy * v
+    u = denomY !== 0 ? (ey - cy * v) / denomY : 0
+  }
+
   return { u, v, x: u * 512, y: v * 512 }
 }
 
@@ -42,6 +79,7 @@ export function useLabelingView({ active, map, featureById }) {
   const [maskResults, setMaskResults] = useState(null)
   const [maskIndex, setMaskIndex] = useState(-1)
   const [camVisible, setCamVisible] = useState(false)
+  const paintbrush = usePaintbrush()
 
   // Mutable handler state (refs)
   const chipRef = useRef({ id: null, corners: null, embedding: null, camMask: null })
@@ -52,9 +90,11 @@ export function useLabelingView({ active, map, featureById }) {
   const camVisibleRef = useRef(false)
   const selectingChipRef = useRef(false)
   const samInitRef = useRef(false)
+  const paintModeRef = useRef(null)
 
   useEffect(() => { maskResultsRef.current = maskResults }, [maskResults])
   useEffect(() => { camVisibleRef.current = camVisible }, [camVisible])
+  useEffect(() => { paintModeRef.current = paintbrush.paintMode }, [paintbrush.paintMode])
 
   // Init SAM decoder once
   useEffect(() => {
@@ -291,12 +331,14 @@ export function useLabelingView({ active, map, featureById }) {
         return
       }
       if (!chip.id) return
+      if (paintModeRef.current) return
       handleSegClick(e.lngLat.lng, e.lngLat.lat, 1)
     }
 
     function onContextMenu(e) {
       e.preventDefault()
       if (!chip.id) return
+      if (paintModeRef.current) return
       const rect = map.getCanvas().getBoundingClientRect()
       const point = new maplibregl.Point(e.clientX - rect.left, e.clientY - rect.top)
       const coord = map.unproject(point)
@@ -306,6 +348,7 @@ export function useLabelingView({ active, map, featureById }) {
     function handleKeyDown(e) {
       if (e.key === 'Backspace') {
         e.preventDefault()
+        if (paintModeRef.current) return
         if (points.length > 0) {
           clearSegmentation()
         } else {
@@ -315,9 +358,41 @@ export function useLabelingView({ active, map, featureById }) {
       }
       if (e.key === 'Escape') {
         e.preventDefault()
+        if (paintModeRef.current) {
+          paintbrush.setPaintMode(null)
+          return
+        }
         deselectChip()
         return
       }
+
+      // Paintbrush shortcuts
+      if (e.key === 'b' || e.key === 'B') {
+        if (!chip.id) return
+        paintbrush.setPaintMode((prev) => prev ? null : 'add')
+        return
+      }
+      if (e.key === 'a' || e.key === 'A') {
+        if (!chip.id) return
+        paintbrush.setPaintMode('add')
+        return
+      }
+      if (e.key === 'e' || e.key === 'E') {
+        if (!chip.id) return
+        paintbrush.setPaintMode('erase')
+        return
+      }
+      if (e.key === '=' || e.key === '+') {
+        paintbrush.adjustBrushSize(2)
+        return
+      }
+      if (e.key === '-' || e.key === '_') {
+        paintbrush.adjustBrushSize(-2)
+        return
+      }
+
+      if (paintModeRef.current) return
+
       if (e.key === 'z' || e.key === 'Z') {
         if (points.length > 0) removePointAt(points.length - 1)
         return
@@ -334,6 +409,7 @@ export function useLabelingView({ active, map, featureById }) {
         if (r.lowResMasks && r.lowResMasks[idx]) {
           lastLowResMaskRef.current = new Float32Array(r.lowResMasks[idx])
         }
+        paintbrush.clearCorrections()
         return idx
       })
     }
@@ -362,7 +438,25 @@ export function useLabelingView({ active, map, featureById }) {
       map.off('mousemove', 'chips-fill', onChipMouseMove)
       map.off('mouseleave', 'chips-fill', onChipMouseLeave)
     }
-  }, [map, active, featureById])
+  }, [map, active, featureById, paintbrush])
+
+  // Update the map mask overlay when paintbrush modifies the composited mask
+  const handleMaskUpdate = useCallback((composited) => {
+    if (!map || !chipRef.current.corners) return
+    const dataURL = maskToDataURL(composited)
+    if (map.getLayer('mask-overlay')) map.removeLayer('mask-overlay')
+    if (map.getSource('mask-overlay')) map.removeSource('mask-overlay')
+    map.addSource('mask-overlay', {
+      type: 'image',
+      url: dataURL,
+      coordinates: chipRef.current.corners,
+    })
+    map.addLayer({
+      id: 'mask-overlay',
+      type: 'raster',
+      source: 'mask-overlay',
+    })
+  }, [map])
 
   const toggleCam = useCallback(() => {
     setCamVisible((prev) => {
@@ -375,6 +469,10 @@ export function useLabelingView({ active, map, featureById }) {
     })
   }, [map])
 
+  // Get the current SAM mask for compositing
+  const currentSamMask = maskResults && maskIndex >= 0 ? maskResults.masks[maskIndex] : null
+  const chipCorners = chipRef.current.corners
+
   return {
     selectedChipId,
     clickPoints,
@@ -382,5 +480,9 @@ export function useLabelingView({ active, map, featureById }) {
     maskIndex,
     camVisible,
     toggleCam,
+    paintbrush,
+    chipCorners,
+    currentSamMask,
+    handleMaskUpdate,
   }
 }
