@@ -50,51 +50,35 @@ function lonLatToPixel(lon, lat, corners) {
   return { u, v, x: u * 512, y: v * 512 }
 }
 
-// Rescale a raw CAM (arbitrary length, assumed square) to 256x256 logit-scale
-function camToMaskInput(camData) {
-  const srcSize = Math.round(Math.sqrt(camData.length))
-  const dst = new Float32Array(256 * 256)
-  const scaleX = srcSize / 256
-  const scaleY = srcSize / 256
-  let min = Infinity, max = -Infinity
-  for (let i = 0; i < camData.length; i++) {
-    if (camData[i] < min) min = camData[i]
-    if (camData[i] > max) max = camData[i]
-  }
-  const range = max - min || 1
-  for (let y = 0; y < 256; y++) {
-    for (let x = 0; x < 256; x++) {
-      const srcX = Math.min(Math.floor(x * scaleX), srcSize - 1)
-      const srcY = Math.min(Math.floor(y * scaleY), srcSize - 1)
-      const val = camData[srcY * srcSize + srcX]
-      dst[y * 256 + x] = ((val - min) / range) * 8 - 4
-    }
-  }
-  return dst
-}
-
-export function useLabelingView({ active, map, featureById }) {
+export function useLabelingView({ active, map, featureById, layerProviders = [] }) {
   const [selectedChipId, setSelectedChipId] = useState(null)
   const [clickPoints, setClickPoints] = useState([])
   const [maskResults, setMaskResults] = useState(null)
   const [maskIndex, setMaskIndex] = useState(-1)
-  const [camVisible, setCamVisible] = useState(false)
   const paintbrush = usePaintbrush()
 
   // Mutable handler state (refs)
-  const chipRef = useRef({ id: null, corners: null, embedding: null, camMask: null })
+  const chipRef = useRef({ id: null, corners: null, embedding: null })
   const pointsRef = useRef([])
   const lastLowResMaskRef = useRef(null)
   const pointMarkersRef = useRef([])
   const maskResultsRef = useRef(null)
-  const camVisibleRef = useRef(false)
   const selectingChipRef = useRef(false)
   const samInitRef = useRef(false)
   const paintModeRef = useRef(null)
+  const layerProvidersRef = useRef(layerProviders)
 
+  useEffect(() => { layerProvidersRef.current = layerProviders }, [layerProviders])
   useEffect(() => { maskResultsRef.current = maskResults }, [maskResults])
-  useEffect(() => { camVisibleRef.current = camVisible }, [camVisible])
   useEffect(() => { paintModeRef.current = paintbrush.paintMode }, [paintbrush.paintMode])
+
+  // Sync layer provider visibility (e.g. CAM toggle)
+  useEffect(() => {
+    if (!map) return
+    for (const lp of layerProviders) {
+      if (lp.syncVisibility) lp.syncVisibility(map)
+    }
+  }, [map, layerProviders])
 
   // Init SAM decoder once
   useEffect(() => {
@@ -112,9 +96,13 @@ export function useLabelingView({ active, map, featureById }) {
     const markers = pointMarkersRef.current
 
     function removeOverlays() {
-      for (const id of ['mask-overlay', 'cam-overlay', 'chip-overlay']) {
+      for (const id of ['mask-overlay', 'chip-overlay']) {
         if (map.getLayer(id)) map.removeLayer(id)
         if (map.getSource(id)) map.removeSource(id)
+      }
+      // Let layer providers clean up their own overlays
+      for (const lp of layerProvidersRef.current) {
+        lp.onChipDeselect(map)
       }
     }
 
@@ -140,7 +128,6 @@ export function useLabelingView({ active, map, featureById }) {
       chip.id = null
       chip.corners = null
       chip.embedding = null
-      chip.camMask = null
       setSelectedChipId(null)
       if (map.getLayer('chips-outline')) {
         map.setPaintProperty('chips-outline', 'line-color', [
@@ -185,6 +172,14 @@ export function useLabelingView({ active, map, featureById }) {
       })
     }
 
+    function getMaskPrior() {
+      if (lastLowResMaskRef.current) return lastLowResMaskRef.current
+      for (const lp of layerProvidersRef.current) {
+        if (lp.maskPrior) return lp.maskPrior
+      }
+      return null
+    }
+
     async function handleSegClick(lon, lat, label) {
       if (!chip.id || !chip.embedding || !chip.corners) return
       if (!isDecoderReady()) return
@@ -198,7 +193,7 @@ export function useLabelingView({ active, map, featureById }) {
 
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
 
-      const maskPrior = lastLowResMaskRef.current || chip.camMask || null
+      const maskPrior = getMaskPrior()
       const { masks, scores, lowResMasks } = await runSamDecoder(chip.embedding, points, maskPrior)
       setMaskResults({ masks, scores, lowResMasks, imageCoords: chip.corners })
       setMaskIndex(0)
@@ -235,18 +230,10 @@ export function useLabelingView({ active, map, featureById }) {
         paint: { 'raster-resampling': 'nearest' },
       })
 
-      map.addSource('cam-overlay', {
-        type: 'image',
-        url: data.chipCamUrl(chipId),
-        coordinates: imageCoords,
-      })
-      map.addLayer({
-        id: 'cam-overlay',
-        type: 'raster',
-        source: 'cam-overlay',
-        paint: { 'raster-opacity': 0.7 },
-        layout: { visibility: camVisibleRef.current ? 'visible' : 'none' },
-      })
+      // Let layer providers add their overlays
+      for (const lp of layerProvidersRef.current) {
+        lp.onChipSelect(map, chipId, imageCoords)
+      }
 
       chip.id = chipId
       chip.corners = imageCoords
@@ -277,12 +264,8 @@ export function useLabelingView({ active, map, featureById }) {
         1.5,
       ])
 
-      const [embedding, camRaw] = await Promise.all([
-        loadNpy(data.embeddingUrl(chipId)),
-        loadNpy(data.chipCamRawUrl(chipId)).catch(() => null),
-      ])
+      const embedding = await loadNpy(data.embeddingUrl(chipId))
       chip.embedding = embedding
-      chip.camMask = camRaw ? camToMaskInput(camRaw) : null
     }
 
     async function rerunSam() {
@@ -297,7 +280,7 @@ export function useLabelingView({ active, map, featureById }) {
       }
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
 
-      const maskPrior = lastLowResMaskRef.current || chip.camMask || null
+      const maskPrior = getMaskPrior()
       const { masks, scores, lowResMasks } = await runSamDecoder(chip.embedding, points, maskPrior)
       setMaskResults({ masks, scores, lowResMasks, imageCoords: chip.corners })
       setMaskIndex(0)
@@ -458,16 +441,8 @@ export function useLabelingView({ active, map, featureById }) {
     })
   }, [map])
 
-  const toggleCam = useCallback(() => {
-    setCamVisible((prev) => {
-      const next = !prev
-      camVisibleRef.current = next
-      if (map && map.getLayer('cam-overlay')) {
-        map.setLayoutProperty('cam-overlay', 'visibility', next ? 'visible' : 'none')
-      }
-      return next
-    })
-  }, [map])
+  // Collect controls from all layer providers
+  const pluginControls = layerProviders.flatMap(lp => lp.controls || [])
 
   // Get the current SAM mask for compositing
   const currentSamMask = maskResults && maskIndex >= 0 ? maskResults.masks[maskIndex] : null
@@ -478,8 +453,7 @@ export function useLabelingView({ active, map, featureById }) {
     clickPoints,
     maskResults,
     maskIndex,
-    camVisible,
-    toggleCam,
+    pluginControls,
     paintbrush,
     chipCorners,
     currentSamMask,

@@ -1,18 +1,23 @@
+import logging
 import os
 from pathlib import Path
 
 import yaml
 
+logger = logging.getLogger(__name__)
+
 _config = None
 
 DEFAULTS = {
     "chip_size_m": 67.2,
+    "chip_size_px": 448,
     "crs": "EPSG:32619",
     "max_chips_per_request": 10000,
     "db_path": "data/glooper.duckdb",
     "data_dir": "public/data",
     "worker_host": "localhost",
     "worker_port": 9100,
+    "plugins": [],
 }
 
 
@@ -28,4 +33,33 @@ def get_config():
     else:
         _config = dict(DEFAULTS)
 
+    # Normalize plugins: bare strings → {"name": str}
+    raw = _config.get("plugins", [])
+    _config["plugins"] = [
+        p if isinstance(p, dict) else {"name": p}
+        for p in raw
+    ]
+
     return _config
+
+
+def get_enabled_plugins() -> list[str]:
+    return [p["name"] for p in get_config()["plugins"]]
+
+
+def get_plugin_config(name: str) -> dict:
+    for p in get_config()["plugins"]:
+        if p["name"] == name:
+            return p
+    return {}
+
+
+def validate_plugin_deps():
+    enabled = set(get_enabled_plugins())
+    for p in get_config()["plugins"]:
+        dep = p.get("requires_embeddings")
+        if dep and dep not in enabled:
+            logger.warning(
+                "Plugin '%s' requires embeddings from '%s', but '%s' is not enabled",
+                p["name"], dep, dep,
+            )

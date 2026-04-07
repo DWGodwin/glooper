@@ -10,6 +10,17 @@ data_dir: "data/"
 worker_host: "localhost"
 worker_port: 9100
 
+chip_size_px: 448
+
+# Plugins
+plugins:
+  - name: dino
+    model: dinov2_vits14
+    input_size: 448
+    patch_size: 14
+  - name: cam
+    requires_embeddings: dino
+
 # Pipeline: imagery provider (read by the chip worker)
 imagery_provider: mass_orthos
 imagery_provider_config:

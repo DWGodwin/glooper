@@ -10,6 +10,7 @@ import { MapProvider, useMap } from './MapContext'
 import { useChipGrid } from './hooks/useChipGrid'
 import { useDefineAreaView } from './views/useDefineAreaView'
 import { useLabelingView } from './views/useLabelingView'
+import { usePluginLabelingLayers, getPluginViews } from './plugins'
 
 const IS_DEMO = import.meta.env.VITE_DATA_SOURCE !== 'api'
 
@@ -18,7 +19,14 @@ function AppInner() {
   const { map, activeBasemap, switchBasemap } = useMap()
   const chipGrid = useChipGrid(map)
   const defineArea = useDefineAreaView({ active: activeView === 'define-area', map, chipGrid })
-  const labeling = useLabelingView({ active: activeView === 'labeling', map, featureById: chipGrid.featureById })
+  const pluginLayers = usePluginLabelingLayers()
+  const labeling = useLabelingView({
+    active: activeView === 'labeling',
+    map,
+    featureById: chipGrid.featureById,
+    layerProviders: pluginLayers,
+  })
+  const pluginViews = getPluginViews()
 
   return (
     <>
@@ -26,6 +34,7 @@ function AppInner() {
         <ViewNav
           activeView={activeView}
           onActiveViewChange={setActiveView}
+          pluginViews={pluginViews}
         />
       }
 
@@ -62,11 +71,13 @@ function AppInner() {
           <BasemapPicker
             activeBasemap={activeBasemap}
             onBasemapChange={switchBasemap}
-            camVisible={labeling.camVisible}
-            onToggleCam={labeling.toggleCam}
+            pluginControls={labeling.pluginControls}
           />
         </div>
       }
+      {pluginViews.map((pv) => activeView === pv.id && pv.Component && (
+        <pv.Component key={pv.id} />
+      ))}
     </>
   )
 }
