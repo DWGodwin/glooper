@@ -16,6 +16,7 @@ Protocol (newline-delimited JSON):
 """
 
 import argparse
+import io
 import json
 import logging
 import os
@@ -25,14 +26,17 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import numpy as np
 import yaml
+from PIL import Image
 
 from pipeline.src.providers import load_provider
 
 logger = logging.getLogger(__name__)
 
 _provider = None
-_cache_dir = None
+_chips_dir = None
+_png_dir = None
 _jobs: dict[str, dict] = {}
 _jobs_lock = threading.Lock()
 _executor = ThreadPoolExecutor(max_workers=4)
@@ -55,29 +59,67 @@ def _load_config():
 
 
 def _init_provider(config: dict):
-    global _provider, _cache_dir, _embeddings_dir
+    global _provider, _chips_dir, _png_dir, _embeddings_dir
     name = config.get("imagery_provider", "static")
     provider_config = config.get("imagery_provider_config", {})
     provider_config.setdefault("crs", config.get("crs", "EPSG:4326"))
     _provider = load_provider(name, provider_config)
 
     data_dir = Path(config.get("data_dir", "public/data"))
-    _cache_dir = data_dir / "chips"
-    _cache_dir.mkdir(parents=True, exist_ok=True)
+    _chips_dir = data_dir / "chips"
+    _chips_dir.mkdir(parents=True, exist_ok=True)
+    _png_dir = data_dir / "chips_png"
+    _png_dir.mkdir(parents=True, exist_ok=True)
     _embeddings_dir = data_dir / "sam_embeddings"
     _embeddings_dir.mkdir(parents=True, exist_ok=True)
-    logger.info("Provider '%s' loaded, cache dir: %s", name, _cache_dir)
+    logger.info("Provider '%s' loaded, chips dir: %s, png dir: %s", name, _chips_dir, _png_dir)
+
+
+def _tif_to_png(tif_bytes: bytes, rgb_bands: tuple[int, ...] = (0, 1, 2)) -> bytes:
+    """Convert GeoTIFF bytes to RGB PNG bytes."""
+    import rasterio
+
+    with rasterio.MemoryFile(tif_bytes) as memfile:
+        with memfile.open() as src:
+            # Read requested bands (rasterio bands are 1-indexed)
+            band_indices = [b + 1 for b in rgb_bands]
+            if src.count == 1:
+                band_indices = [1, 1, 1]
+            data = src.read(band_indices)  # shape: (3, H, W)
+
+    # Normalize to uint8
+    if data.dtype != np.uint8:
+        if np.issubdtype(data.dtype, np.integer):
+            max_val = np.iinfo(data.dtype).max
+        else:
+            max_val = data.max() or 1.0
+        data = (data.astype(np.float32) / max_val * 255).clip(0, 255).astype(np.uint8)
+
+    # (bands, H, W) -> (H, W, bands)
+    data = np.transpose(data, (1, 2, 0))
+    buf = io.BytesIO()
+    Image.fromarray(data).save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def _generate_chip(chip_id: str, geometry_wkt: str, crs: str) -> Path:
-    """Generate a chip image and write it to cache. Returns the path."""
-    cached = _cache_dir / f"{chip_id}.tif"
-    if cached.exists():
-        return cached
+    """Generate a chip image and write it to cache. Returns the TIF path.
 
-    data = _provider.get_chip_image(chip_id, geometry_wkt, crs)
-    cached.write_bytes(data)
-    return cached
+    Also writes a pre-rendered PNG alongside the TIF for fast serving.
+    """
+    tif_path = _chips_dir / f"{chip_id}.tif"
+    png_path = _png_dir / f"{chip_id}.png"
+
+    if tif_path.exists() and png_path.exists():
+        return tif_path
+
+    tif_bytes = _provider.get_chip_image(chip_id, geometry_wkt, crs)
+    if not tif_path.exists():
+        tif_path.write_bytes(tif_bytes)
+    if not png_path.exists():
+        png_path.write_bytes(_tif_to_png(tif_bytes))
+
+    return tif_path
 
 
 def _process_batch_chip(job_id: str, chip_id: str, geometry_wkt: str, crs: str):
@@ -186,7 +228,7 @@ def _run_embeddings(job_id: str, chip_ids: list[str]):
             _jobs[job_id]["phase"] = "complete"
         return
 
-    dataset = ChipDataset(need, _cache_dir)
+    dataset = ChipDataset(need, _chips_dir)
     loader = DataLoader(dataset, batch_size=4, num_workers=0, collate_fn=sam_collate)
 
     for batch in loader:

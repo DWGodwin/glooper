@@ -18,42 +18,21 @@ function InfoPanel() {
       </button>
       <h2>Glooper Demo: Refining Labels</h2>
       <p className="info-subtitle">
-        High-quality segmentation from minimal supervision, running in your browser. GitHub Repo: https://github.com/DWGodwin/glooper/
+        High-quality segmentation from minimal supervision, running in your browser.
+      </p>
+      <p className="info-subtitle">
+        GitHub Repo: <a href="https://github.com/DWGodwin/glooper/" target="_blank" rel="noopener">DWGodwin/glooper</a>
       </p>
 
-      <div className="info-pipeline">
-        <div className="info-step">
-          <span className="info-step-num">1</span>
-          <div>
-            <strong>Cheap labels</strong>
-            <span className="info-detail">
-              Each image chip gets a simple present/absent label &mdash; no pixel-level annotation needed. In this case, green chips have rooftop solar, red chips have none.
-            </span>
-          </div>
-        </div>
-        <div className="info-step">
-          <span className="info-step-num">2</span>
-          <div>
-            <strong>DINOv2 activation maps</strong>
-            <span className="info-detail">
-              A linear probe on DINOv2 features produces class activation maps that highlight areas of interest based on presence/absence labels.
-            </span>
-          </div>
-        </div>
-        <div className="info-step">
-          <span className="info-step-num">3</span>
-          <div>
-            <strong>SAM refinement in-browser</strong>
-            <span className="info-detail">
-              The class activation map seeds SAM's decoder (running locally via ONNX). Click to refine &mdash; SAM snaps to precise boundaries.
-            </span>
-          </div>
-        </div>
-      </div>
-
       <div className="info-tryit">
-        <strong>Try it:</strong> Click a chip on the map, then click within it to segment.
-        Right-click to exclude areas. Use [ and ] to select the best mask. Toggle the class activation map overlay to see what DINOv2 sees.
+        <strong>Try it:</strong>
+        <ul>
+          <li>Click a chip on the map, then click within it to segment.</li>
+          <li>Right-click to exclude areas.</li>
+          <li>Use <kbd>[</kbd> and <kbd>]</kbd> to select the best mask.</li>
+          <li>Prompt with more points iteratively.</li>
+          <li><kbd>b</kbd> triggers painting mode to manually correct SAM predictions as a final step.</li>
+        </ul>
       </div>
     </div>
   )

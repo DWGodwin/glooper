@@ -1,6 +1,6 @@
 import { BASEMAP_KEYS } from './mapStyle'
 
-function BasemapPicker({ activeBasemap, onBasemapChange, camVisible, onToggleCam }) {
+function BasemapPicker({ activeBasemap, onBasemapChange, pluginControls = [] }) {
   return (
     <div className="basemap-picker">
       {BASEMAP_KEYS.map((key) => (
@@ -12,12 +12,15 @@ function BasemapPicker({ activeBasemap, onBasemapChange, camVisible, onToggleCam
           {key === 'imagery' ? 'Imagery' : key === 'massgis' ? 'MassGIS' : 'Map'}
         </button>
       ))}
-      <button
-        className={camVisible ? 'active' : ''}
-        onClick={onToggleCam}
-      >
-        Toggle Class Activation Map
-      </button>
+      {pluginControls.map((ctrl, i) => (
+        <button
+          key={ctrl.label || i}
+          className={ctrl.active ? 'active' : ''}
+          onClick={ctrl.onToggle}
+        >
+          {ctrl.label}
+        </button>
+      ))}
     </div>
   )
 }
