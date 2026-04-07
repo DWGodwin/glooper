@@ -8,7 +8,9 @@ from typing import Protocol, runtime_checkable
 
 @runtime_checkable
 class ImageryProvider(Protocol):
-    def get_chip_image(self, chip_id: str, geometry_wkt: str, crs: str) -> bytes: ...
+    def get_chip_image(self, chip_id: str, geometry_wkt: str, crs: str) -> bytes:
+        """Return chip imagery as GeoTIFF bytes (all bands, native dtype, CRS/transform embedded)."""
+        ...
 
 
 def load_provider(name: str, config: dict) -> ImageryProvider:

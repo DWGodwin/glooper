@@ -1,7 +1,7 @@
 """MassGIS Orthoimagery provider.
 
 Downloads JP2 tiles from the MassGIS ortho catalog on demand,
-converts to TIF, and renders chip-sized PNGs via windowed reads.
+converts to TIF, and renders chip-sized GeoTIFFs via windowed reads.
 
 Config keys:
     year: int          — ortho year (default 2021)
@@ -17,8 +17,8 @@ import geopandas as gpd
 import pooch
 import rasterio
 import rioxarray as rxr
-from PIL import Image
 from pooch import Unzip
+from rasterio.transform import from_bounds as transform_from_bounds
 from rasterio.windows import from_bounds
 from rasterio.warp import transform_bounds
 from shapely import wkt
@@ -110,15 +110,34 @@ class MassOrthosProvider:
         with rasterio.open(tif_path) as src:
             src_bounds = transform_bounds(crs, src.crs, *chip_bounds)
             window = from_bounds(*src_bounds, transform=src.transform)
+            # Read all bands at native dtype
             data = src.read(
-                indexes=(1, 2, 3),
                 window=window,
-                out_shape=(3, self._chip_size, self._chip_size),
+                out_shape=(src.count, self._chip_size, self._chip_size),
             )
+            src_dtype = src.dtypes[0]
+            src_count = src.count
+            src_crs = src.crs
 
-        img = Image.fromarray(data.transpose(1, 2, 0))
+        # Build a transform for the output chip in the chip's own CRS
+        chip_transform = transform_from_bounds(
+            *chip_bounds, self._chip_size, self._chip_size
+        )
+
         buf = io.BytesIO()
-        img.save(buf, format="PNG")
+        with rasterio.open(
+            buf,
+            "w",
+            driver="GTiff",
+            height=self._chip_size,
+            width=self._chip_size,
+            count=src_count,
+            dtype=src_dtype,
+            crs=crs,
+            transform=chip_transform,
+        ) as dst:
+            dst.write(data)
+
         return buf.getvalue()
 
 

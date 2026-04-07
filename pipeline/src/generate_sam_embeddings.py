@@ -1,9 +1,9 @@
 """
 Step 3: Generate SAM encoder embeddings and export the decoder to ONNX.
 
-Runs SAM ViT-B encoder on each 512x512 chip and saves the image embeddings
-as .npy files. Also exports the SAM decoder as an ONNX model for in-browser
-inference via onnxruntime-web.
+Runs SAM ViT-B encoder on each chip via DataLoader and saves the image
+embeddings as .npy files. Also exports the SAM decoder as an ONNX model
+for in-browser inference via onnxruntime-web.
 
 Outputs:
   - public/data/sam_embeddings/{chip_id}.npy  — SAM image embedding (1, 256, 64, 64) float32
@@ -16,9 +16,11 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from PIL import Image
-from segment_anything import SamPredictor, sam_model_registry
+from segment_anything import sam_model_registry
 from segment_anything.utils.onnx import SamOnnxModel
+from torch.utils.data import DataLoader
+
+from pipeline.src.dataset import ChipDataset, sam_collate
 
 CHIPS_DIR = Path(__file__).parent.parent / "public" / "data" / "chips"
 DATA_DIR = Path(__file__).parent.parent / "public" / "data"
@@ -74,12 +76,17 @@ def main():
         urllib.request.urlretrieve(SAM_CHECKPOINT_URL, SAM_CHECKPOINT)
         print(f"  Saved to {SAM_CHECKPOINT}")
 
-    chip_paths = sorted(CHIPS_DIR.glob("*.png"))
-    if not chip_paths:
+    # Build dataset, filtering out chips that already have embeddings
+    all_ids = sorted(p.stem for p in CHIPS_DIR.glob("*.tif"))
+    chip_ids = [cid for cid in all_ids if not (EMBEDDINGS_DIR / f"{cid}.npy").exists()]
+    if not all_ids:
         print(f"No chips found in {CHIPS_DIR}")
         sys.exit(1)
+    if not chip_ids:
+        print(f"All {len(all_ids)} chips already have embeddings")
+        return
 
-    print(f"Found {len(chip_paths)} chips")
+    print(f"Found {len(all_ids)} chips, {len(chip_ids)} need embeddings")
 
     device = "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
@@ -91,24 +98,29 @@ def main():
     export_decoder_onnx(sam)
     sam = sam.to(device)
 
-    predictor = SamPredictor(sam)
+    dataset = ChipDataset(chip_ids, CHIPS_DIR)
+    loader = DataLoader(
+        dataset,
+        batch_size=1,
+        num_workers=0,
+        collate_fn=sam_collate,
+        pin_memory=(device == "cuda"),
+    )
 
     print("Generating embeddings...")
-    for i, chip_path in enumerate(chip_paths):
-        chip_id = chip_path.stem
-        out_path = EMBEDDINGS_DIR / f"{chip_id}.npy"
+    done = 0
+    for batch in loader:
+        pixel_values = batch["pixel_values"].to(device)
+        with torch.no_grad():
+            embeddings = sam.image_encoder(pixel_values)  # (B, 256, 64, 64)
 
-        if out_path.exists():
-            continue
+        for i, chip_id in enumerate(batch["chip_ids"]):
+            emb = embeddings[i : i + 1].cpu().numpy()  # (1, 256, 64, 64)
+            np.save(EMBEDDINGS_DIR / f"{chip_id}.npy", emb)
 
-        img = np.array(Image.open(chip_path).convert("RGB"))
-        predictor.set_image(img)
-        embedding = predictor.get_image_embedding().cpu().numpy()  # (1, 256, 64, 64)
-
-        np.save(out_path, embedding)
-
-        if (i + 1) % 10 == 0 or i == 0:
-            print(f"  [{i + 1}/{len(chip_paths)}] {chip_id} → {embedding.shape}")
+        done += len(batch["chip_ids"])
+        if done % 10 <= len(batch["chip_ids"]) or done == len(chip_ids):
+            print(f"  [{done}/{len(chip_ids)}] {embeddings.shape}")
 
     print("Done.")
 

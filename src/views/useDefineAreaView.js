@@ -119,7 +119,12 @@ export function useDefineAreaView({ active, map, chipGrid }) {
       data.createStudyArea({ sw, ne }, split).then((res) => {
         chipGrid.refreshChips()
         if (res.job_id) {
-          setPrefetchJob({ jobId: res.job_id, total: res.count, done: 0, failed: 0 })
+          setPrefetchJob({
+            jobId: res.job_id,
+            phase: 'chips',
+            chips_total: res.count, chips_done: 0, chips_failed: 0,
+            embed_total: 0, embed_done: 0, embed_failed: 0,
+          })
         }
       })
 
@@ -145,7 +150,7 @@ export function useDefineAreaView({ active, map, chipGrid }) {
     const interval = setInterval(() => {
       data.prefetchStatus(prefetchJobId).then((status) => {
         setPrefetchJob((prev) => prev && { ...prev, ...status })
-        if (status.done + status.failed >= status.total) {
+        if (status.phase === 'complete') {
           clearInterval(interval)
         }
       })

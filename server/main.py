@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from server.db import init_db
 from server.providers import init_provider
-from server.routers import chips, study_areas
+from server.routers import chips, labels, models, study_areas
 
 app = FastAPI(title="Glooper")
 
@@ -16,6 +16,8 @@ app.add_middleware(
 
 app.include_router(study_areas.router)
 app.include_router(chips.router)
+app.include_router(labels.router)
+app.include_router(models.router)
 
 
 @app.on_event("startup")
