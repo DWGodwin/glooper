@@ -29,4 +29,4 @@ dist-ssr
 CLAUDE.md
 .claude/
 .agents/
-data/
+/data/
