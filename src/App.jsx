@@ -5,6 +5,7 @@ import BasemapPicker from './BasemapPicker'
 import ViewNav from './ViewNav'
 import InfoPanel from './InfoPanel'
 import DefineArea from './DefineArea'
+import PaintbrushOverlay from './PaintbrushOverlay'
 import { MapProvider, useMap } from './MapContext'
 import { useChipGrid } from './hooks/useChipGrid'
 import { useDefineAreaView } from './views/useDefineAreaView'
@@ -40,11 +41,23 @@ function AppInner() {
       {activeView === 'labeling' &&
         <div>
           {IS_DEMO && <InfoPanel />}
+          <PaintbrushOverlay
+            map={map}
+            chipCorners={labeling.chipCorners}
+            paintMode={labeling.paintbrush.paintMode}
+            brushSize={labeling.paintbrush.brushSize}
+            paintAt={labeling.paintbrush.paintAt}
+            compositeMask={labeling.paintbrush.compositeMask}
+            samMask={labeling.currentSamMask}
+            onMaskUpdate={labeling.handleMaskUpdate}
+          />
           <StatusBar
             selectedChipId={labeling.selectedChipId}
             clickPoints={labeling.clickPoints}
             maskIndex={labeling.maskIndex}
             maskResults={labeling.maskResults}
+            paintMode={labeling.paintbrush.paintMode}
+            brushSize={labeling.paintbrush.brushSize}
           />
           <BasemapPicker
             activeBasemap={activeBasemap}

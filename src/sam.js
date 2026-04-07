@@ -1,6 +1,8 @@
 import * as ort from 'onnxruntime-web'
 import { data } from './data.js'
 
+export const SAM_MASK_SIZE = 512
+
 let session = null
 
 /**
