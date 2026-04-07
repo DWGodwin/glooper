@@ -9,6 +9,8 @@ from server.db import get_all_chips, get_chip_by_id, delete_chips as db_delete_c
 from server.providers import get_chip_image
 from server.worker_client import WorkerUnavailable
 
+from pathlib import Path
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
@@ -61,6 +63,24 @@ def chip_image(chip_id: str):
 
     return Response(content=png_bytes, media_type="image/png")
 
+@router.get("/chips/{chip_id}/sam-embedding")
+def chip_sam_embedding(chip_id: str):
+    chip = get_chip_by_id(chip_id)
+    if not chip:
+        raise HTTPException(status_code=404, detail=f"Chip '{chip_id}' not found")
+    
+    cfg = get_config()
+    cache_dir = Path(cfg["data_dir"]) / "sam_embeddings"
+    try:
+        with open(cache_dir / f"{chip_id}.npy", "rb") as f:                              
+            npy_bytes = f.read()
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"No sam embedding available for chip '{chip_id}'")
+    except Exception:
+        logger.exception("Failed to get sam embedding for '%s'", chip_id)
+        raise HTTPException(status_code=502, detail="Fetch SAM embedding failed")
+
+    return Response(content=npy_bytes, media_type="application/octet-stream")  
 
 @router.delete("/chips")
 def delete_chips(req: DeleteChipsRequest):

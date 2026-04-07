@@ -63,7 +63,15 @@ def get_job_status(job_id: str) -> dict:
     resp = _send_request({"query_job": job_id})
     if resp.get("status") == "error":
         raise RuntimeError(f"Worker error: {resp.get('message', 'unknown')}")
-    return {"total": resp["total"], "done": resp["done"], "failed": resp["failed"]}
+    return {
+        "phase": resp.get("phase", "chips"),
+        "chips_total": resp.get("chips_total", resp.get("total", 0)),
+        "chips_done": resp.get("chips_done", resp.get("done", 0)),
+        "chips_failed": resp.get("chips_failed", resp.get("failed", 0)),
+        "embed_total": resp.get("embed_total", 0),
+        "embed_done": resp.get("embed_done", 0),
+        "embed_failed": resp.get("embed_failed", 0),
+    }
 
 
 def check_worker() -> bool:

@@ -20,10 +20,15 @@ function DefineArea({ drawMode, onToggleDraw, activeSplit, onSplitChange, prefet
       >
         {drawMode ? 'Cancel Drawing' : 'Draw Rectangle'}
       </button>
-      {prefetchJob && prefetchJob.done + prefetchJob.failed < prefetchJob.total && (
+      {prefetchJob && prefetchJob.phase !== 'complete' && (
         <div className="prefetch-status">
-          Caching images... {prefetchJob.done}/{prefetchJob.total}
-          {prefetchJob.failed > 0 && ` (${prefetchJob.failed} failed)`}
+          {prefetchJob.phase === 'chips' && (
+            <>Caching images... {prefetchJob.chips_done}/{prefetchJob.chips_total}
+            {prefetchJob.chips_failed > 0 && ` (${prefetchJob.chips_failed} failed)`}</>
+          )}
+          {prefetchJob.phase === 'embeddings' && (
+            <>Generating embeddings... {prefetchJob.embed_done}/{prefetchJob.embed_total}</>
+          )}
         </div>
       )}
     </div>

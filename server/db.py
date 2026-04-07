@@ -24,6 +24,13 @@ def init_db():
             geometry GEOMETRY NOT NULL
         )
     """)
+    _conn.execute("""
+        CREATE TABLE IF NOT EXISTS labels (
+            id TEXT PRIMARY KEY,
+            class TEXT NOT NULL DEFAULT 'positive',
+            geometry GEOMETRY NOT NULL
+        )
+    """)
 
 
 def get_db():
@@ -74,3 +81,79 @@ def delete_chips(ids):
     placeholders = ", ".join(["?"] * len(ids))
     result = conn.execute(f"DELETE FROM chips WHERE id IN ({placeholders})", ids)
     return result.fetchone()[0] if result.description else len(ids)
+
+
+# ── Labels ──────────────────────────────────────────────────────────
+
+
+def insert_labels(features: list[dict], crs: str):
+    """Insert GeoJSON features as label rows, transforming to project CRS."""
+    conn = get_db()
+    cfg = get_config()
+    project_crs = cfg["crs"]
+
+    for feat in features:
+        geom_json = json.dumps(feat["geometry"])
+        label_id = feat.get("id") or feat.get("properties", {}).get("id")
+        label_class = feat.get("properties", {}).get("class", "positive")
+
+        if crs == project_crs:
+            conn.execute(
+                "INSERT OR REPLACE INTO labels (id, class, geometry) "
+                "VALUES (?, ?, ST_GeomFromGeoJSON(?))",
+                [label_id, label_class, geom_json],
+            )
+        else:
+            conn.execute(
+                "INSERT OR REPLACE INTO labels (id, class, geometry) "
+                "VALUES (?, ?, ST_Transform(ST_GeomFromGeoJSON(?), ?, ?))",
+                [label_id, label_class, geom_json, crs, project_crs],
+            )
+
+
+def get_all_labels(crs: str = "EPSG:4326") -> list[dict]:
+    """Return all labels as GeoJSON-ready dicts."""
+    conn = get_db()
+    cfg = get_config()
+    project_crs = cfg["crs"]
+    rows = conn.execute(
+        f"SELECT id, class, ST_AsGeoJSON(ST_FlipCoordinates(ST_Transform(geometry, '{project_crs}', '{crs}'))) "
+        "FROM labels"
+    ).fetchall()
+    return [
+        {"id": r[0], "class": r[1], "geojson": json.loads(r[2])}
+        for r in rows
+    ]
+
+
+def delete_labels(ids: list[str]) -> int:
+    if not ids:
+        return 0
+    conn = get_db()
+    placeholders = ", ".join(["?"] * len(ids))
+    result = conn.execute(f"DELETE FROM labels WHERE id IN ({placeholders})", ids)
+    return result.fetchone()[0] if result.description else len(ids)
+
+
+def get_labels_for_chips(chip_ids: list[str]) -> dict[str, list[tuple[bytes, str]]]:
+    """Spatial join: return {chip_id: [(wkb_bytes, class), ...]} for label burning."""
+    if not chip_ids:
+        return {}
+    conn = get_db()
+    placeholders = ", ".join(["?"] * len(chip_ids))
+    rows = conn.execute(
+        f"""
+        SELECT c.id AS chip_id,
+               ST_AsBinary(ST_Intersection(l.geometry, c.geometry)) AS label_geom,
+               l.class
+        FROM chips c
+        JOIN labels l ON ST_Intersects(c.geometry, l.geometry)
+        WHERE c.id IN ({placeholders})
+        """,
+        chip_ids,
+    ).fetchall()
+
+    result: dict[str, list[tuple[bytes, str]]] = {}
+    for chip_id, wkb, cls in rows:
+        result.setdefault(chip_id, []).append((bytes(wkb), cls))
+    return result
