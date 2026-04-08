@@ -68,16 +68,15 @@ def chip_sam_embedding(chip_id: str):
     chip = get_chip_by_id(chip_id)
     if not chip:
         raise HTTPException(status_code=404, detail=f"Chip '{chip_id}' not found")
-    
+
     cfg = get_config()
-    cache_dir = Path(cfg["data_dir"]) / "sam_embeddings"
+    npy_path = Path(cfg["data_dir"]) / "sam_embeddings" / f"{chip_id}.npy"
     try:
-        with open(cache_dir / f"{chip_id}.npy", "rb") as f:                              
-            npy_bytes = f.read()
+        npy_bytes = npy_path.read_bytes()
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"No sam embedding available for chip '{chip_id}'")
+        raise HTTPException(status_code=404, detail=f"No SAM embedding for chip '{chip_id}'")
     except Exception:
-        logger.exception("Failed to get sam embedding for '%s'", chip_id)
+        logger.exception("Failed to read SAM embedding for '%s'", chip_id)
         raise HTTPException(status_code=502, detail="Fetch SAM embedding failed")
 
     return Response(content=npy_bytes, media_type="application/octet-stream")  

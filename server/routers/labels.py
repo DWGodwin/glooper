@@ -1,11 +1,10 @@
 import base64
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from server.config import get_config
-from server.db import insert_labels, get_all_labels, delete_labels, get_chip_by_id
+from server.db import insert_labels, get_all_labels, delete_labels, get_chip_by_id, save_chip_label
 
 router = APIRouter(prefix="/api")
 
@@ -45,23 +44,25 @@ def remove_labels(req: DeleteLabelsRequest):
     return {"deleted": count}
 
 
-class MaskUpload(BaseModel):
-    chip_id: str
-    mask: str  # base64-encoded PNG (512x512 single-channel)
-    split: str = "train"
+class ChipLabelUpload(BaseModel):
+    mask: str  # base64-encoded PNG (single-channel binary mask)
+    label_class: str = "positive"
 
 
-@router.post("/labels/mask")
-def upload_mask(req: MaskUpload):
-    chip = get_chip_by_id(req.chip_id)
+@router.post("/chips/{chip_id}/label")
+def upload_chip_label(chip_id: str, req: ChipLabelUpload):
+    chip = get_chip_by_id(chip_id)
     if not chip:
-        raise HTTPException(status_code=404, detail=f"Chip {req.chip_id} not found")
+        raise HTTPException(status_code=404, detail=f"Chip '{chip_id}' not found")
 
-    labels_dir = Path("data/labels")
-    labels_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        mask_bytes = base64.b64decode(req.mask)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid base64 mask data")
 
-    mask_bytes = base64.b64decode(req.mask)
-    mask_path = labels_dir / f"{req.chip_id}.png"
-    mask_path.write_bytes(mask_bytes)
+    try:
+        label_id = save_chip_label(chip_id, mask_bytes, req.label_class)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
-    return {"ok": True, "chip_id": req.chip_id, "path": str(mask_path)}
+    return {"ok": True, "chip_id": chip_id, "label_id": label_id}

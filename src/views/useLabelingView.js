@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import maplibregl from 'maplibre-gl'
-import { initSamDecoder, isDecoderReady, runSamDecoder, maskToDataURL } from '../sam'
+import { initSamDecoder, isDecoderReady, runSamDecoder, maskToDataURL, maskToPngBase64 } from '../sam'
 import { loadNpy } from '../npy'
 import { data } from '../data.js'
 import { usePaintbrush } from '../hooks/usePaintbrush'
@@ -55,6 +55,7 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
   const [clickPoints, setClickPoints] = useState([])
   const [maskResults, setMaskResults] = useState(null)
   const [maskIndex, setMaskIndex] = useState(-1)
+  const [showLabels, setShowLabels] = useState(false)
   const paintbrush = usePaintbrush()
 
   // Mutable handler state (refs)
@@ -63,13 +64,18 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
   const lastLowResMaskRef = useRef(null)
   const pointMarkersRef = useRef([])
   const maskResultsRef = useRef(null)
+  const maskIndexRef = useRef(-1)
   const selectingChipRef = useRef(false)
+  const selectGenRef = useRef(0)
   const samInitRef = useRef(false)
   const paintModeRef = useRef(null)
   const layerProvidersRef = useRef(layerProviders)
+  const showLabelsRef = useRef(false)
 
   useEffect(() => { layerProvidersRef.current = layerProviders }, [layerProviders])
+  useEffect(() => { showLabelsRef.current = showLabels }, [showLabels])
   useEffect(() => { maskResultsRef.current = maskResults }, [maskResults])
+  useEffect(() => { maskIndexRef.current = maskIndex }, [maskIndex])
   useEffect(() => { paintModeRef.current = paintbrush.paintMode }, [paintbrush.paintMode])
 
   // Sync layer provider visibility (e.g. CAM toggle)
@@ -86,6 +92,45 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
     samInitRef.current = true
     initSamDecoder().then(() => console.log('SAM decoder ready'))
   }, [])
+
+  // Labels layer: load and toggle visibility
+  useEffect(() => {
+    if (!map || !active) return
+
+    if (showLabels) {
+      fetch(data.labelsUrl())
+        .then(r => r.json())
+        .then(geojson => {
+          if (map.getSource('labels')) {
+            map.getSource('labels').setData(geojson)
+          } else {
+            map.addSource('labels', { type: 'geojson', data: geojson })
+            map.addLayer({
+              id: 'labels-fill',
+              type: 'fill',
+              source: 'labels',
+              paint: {
+                'fill-color': '#22c55e',
+                'fill-opacity': 0.35,
+              },
+            })
+            map.addLayer({
+              id: 'labels-outline',
+              type: 'line',
+              source: 'labels',
+              paint: {
+                'line-color': '#16a34a',
+                'line-width': 1.5,
+              },
+            })
+          }
+        })
+    } else {
+      if (map.getLayer('labels-fill')) map.removeLayer('labels-fill')
+      if (map.getLayer('labels-outline')) map.removeLayer('labels-outline')
+      if (map.getSource('labels')) map.removeSource('labels')
+    }
+  }, [map, active, showLabels])
 
   // Event handlers — active only when this view is active
   useEffect(() => {
@@ -213,6 +258,8 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
       const feature = featureById.current[chipId]
       if (!feature) return
 
+      const gen = ++selectGenRef.current
+
       // Vertex order from source: [NE, SE, SW, NW, NE(closing)]
       // MapLibre image coords: [TL, TR, BR, BL] = [NW, NE, SE, SW]
       const coords = feature.geometry.coordinates[0]
@@ -264,8 +311,15 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
         1.5,
       ])
 
-      const embedding = await loadNpy(data.embeddingUrl(chipId))
-      chip.embedding = embedding
+      try {
+        const embedding = await loadNpy(data.embeddingUrl(chipId))
+        if (selectGenRef.current !== gen) return // stale — user selected another chip
+        chip.embedding = embedding
+      } catch (e) {
+        console.error(`Failed to load embedding for ${chipId}:`, e)
+        if (selectGenRef.current !== gen) return
+        chip.embedding = null
+      }
     }
 
     async function rerunSam() {
@@ -337,6 +391,33 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
         } else {
           deselectChip()
         }
+        return
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        if (!chip.id) return
+        const r = maskResultsRef.current
+        if (!r || r.masks.length === 0) return
+        // Composite the current SAM mask with any paintbrush corrections
+        const idx = maskIndexRef.current >= 0 ? maskIndexRef.current : 0
+        const samMask = r.masks[idx]
+        const finalMask = paintbrush.compositeMask(samMask)
+        const base64 = maskToPngBase64(finalMask)
+        data.saveChipLabel(chip.id, base64, 'positive').then((res) => {
+          if (res.ok) {
+            console.log('Label saved:', res.label_id)
+            clearSegmentation()
+            paintbrush.clearCorrections()
+            // Refresh labels layer if visible
+            if (showLabelsRef.current && map.getSource('labels')) {
+              fetch(data.labelsUrl()).then(r => r.json()).then(geojson => {
+                if (map.getSource('labels')) map.getSource('labels').setData(geojson)
+              })
+            }
+          } else {
+            console.error('Failed to save label:', res.detail || res)
+          }
+        })
         return
       }
       if (e.key === 'Escape') {
@@ -442,7 +523,12 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
   }, [map])
 
   // Collect controls from all layer providers
-  const pluginControls = layerProviders.flatMap(lp => lp.controls || [])
+  const labelsControl = {
+    label: 'Labels',
+    active: showLabels,
+    onToggle: () => setShowLabels(prev => !prev),
+  }
+  const pluginControls = [labelsControl, ...layerProviders.flatMap(lp => lp.controls || [])]
 
   // Get the current SAM mask for compositing
   const currentSamMask = maskResults && maskIndex >= 0 ? maskResults.masks[maskIndex] : null

@@ -7,6 +7,7 @@ export const data = {
   chipImageUrl:  (id) => STATIC ? `${BASE}data/chips/${id}.png`          : `${API}/api/chips/${id}/image`,
   embeddingUrl:  (id) => STATIC ? `${BASE}data/sam_embeddings/${id}.npy` : `${API}/api/chips/${id}/sam-embedding`,
   samDecoderUrl: ()   => STATIC ? `${BASE}data/sam_decoder.onnx`         : `${API}/api/models/sam-decoder`,
+  labelsUrl:     ()   => `${API}/api/labels`,
   createStudyArea: (bbox, split) => fetch(`${API}/api/study-areas`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -18,4 +19,10 @@ export const data = {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ids }),
   }).then(r => r.json()),
+  saveChipLabel: (chipId, maskPngBase64, labelClass = 'positive') =>
+    fetch(`${API}/api/chips/${chipId}/label`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mask: maskPngBase64, label_class: labelClass }),
+    }).then(r => r.json()),
 }

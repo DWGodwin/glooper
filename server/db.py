@@ -1,11 +1,22 @@
+import io
 import json
+import re
+import threading
+import uuid
 from pathlib import Path
 
 import duckdb
+import numpy as np
+import rasterio.features
+from PIL import Image
+from rasterio.transform import from_bounds
+from shapely.geometry import shape
+from shapely.ops import unary_union
 
 from server.config import get_config
 
 _conn = None
+_write_lock = threading.Lock()
 
 
 def init_db():
@@ -39,21 +50,26 @@ def get_db():
     return _conn
 
 
+def _cursor():
+    """Return a thread-local cursor for concurrent reads."""
+    return get_db().cursor()
+
+
 def insert_chips(chips, crs):
     """Batch insert chips, skipping duplicates."""
     conn = get_db()
-    for chip in chips:
-        conn.execute(
-            "INSERT OR IGNORE INTO chips (id, split, status, geometry) VALUES (?, ?, 'unlabeled', ST_GeomFromText(?))",
-            [chip["id"], chip["split"], chip["geometry_wkt"]],
-        )
+    with _write_lock:
+        for chip in chips:
+            conn.execute(
+                "INSERT OR IGNORE INTO chips (id, split, status, geometry) VALUES (?, ?, 'unlabeled', ST_GeomFromText(?))",
+                [chip["id"], chip["split"], chip["geometry_wkt"]],
+            )
 
 
 def get_all_chips():
-    conn = get_db()
     cfg = get_config()
     crs = cfg["crs"]
-    rows = conn.execute(
+    rows = _cursor().execute(
         f"SELECT id, split, status, ST_AsGeoJSON(ST_FlipCoordinates(ST_Transform(geometry, '{crs}', 'EPSG:4326'))) AS geojson FROM chips"
     ).fetchall()
     return [
@@ -64,8 +80,7 @@ def get_all_chips():
 
 def get_chip_by_id(chip_id):
     """Return a chip's id and geometry as WKT, or None if not found."""
-    conn = get_db()
-    rows = conn.execute(
+    rows = _cursor().execute(
         "SELECT id, ST_AsText(geometry) AS geometry_wkt FROM chips WHERE id = ?",
         [chip_id],
     ).fetchall()
@@ -79,8 +94,9 @@ def delete_chips(ids):
         return 0
     conn = get_db()
     placeholders = ", ".join(["?"] * len(ids))
-    result = conn.execute(f"DELETE FROM chips WHERE id IN ({placeholders})", ids)
-    return result.fetchone()[0] if result.description else len(ids)
+    with _write_lock:
+        result = conn.execute(f"DELETE FROM chips WHERE id IN ({placeholders})", ids)
+        return result.fetchone()[0] if result.description else len(ids)
 
 
 # ── Labels ──────────────────────────────────────────────────────────
@@ -92,31 +108,31 @@ def insert_labels(features: list[dict], crs: str):
     cfg = get_config()
     project_crs = cfg["crs"]
 
-    for feat in features:
-        geom_json = json.dumps(feat["geometry"])
-        label_id = feat.get("id") or feat.get("properties", {}).get("id")
-        label_class = feat.get("properties", {}).get("class", "positive")
+    with _write_lock:
+        for feat in features:
+            geom_json = json.dumps(feat["geometry"])
+            label_id = feat.get("id") or feat.get("properties", {}).get("id")
+            label_class = feat.get("properties", {}).get("class", "positive")
 
-        if crs == project_crs:
-            conn.execute(
-                "INSERT OR REPLACE INTO labels (id, class, geometry) "
-                "VALUES (?, ?, ST_GeomFromGeoJSON(?))",
-                [label_id, label_class, geom_json],
-            )
-        else:
-            conn.execute(
-                "INSERT OR REPLACE INTO labels (id, class, geometry) "
-                "VALUES (?, ?, ST_Transform(ST_GeomFromGeoJSON(?), ?, ?))",
-                [label_id, label_class, geom_json, crs, project_crs],
-            )
+            if crs == project_crs:
+                conn.execute(
+                    "INSERT OR REPLACE INTO labels (id, class, geometry) "
+                    "VALUES (?, ?, ST_GeomFromGeoJSON(?))",
+                    [label_id, label_class, geom_json],
+                )
+            else:
+                conn.execute(
+                    "INSERT OR REPLACE INTO labels (id, class, geometry) "
+                    "VALUES (?, ?, ST_Transform(ST_GeomFromGeoJSON(?), ?, ?))",
+                    [label_id, label_class, geom_json, crs, project_crs],
+                )
 
 
 def get_all_labels(crs: str = "EPSG:4326") -> list[dict]:
     """Return all labels as GeoJSON-ready dicts."""
-    conn = get_db()
     cfg = get_config()
     project_crs = cfg["crs"]
-    rows = conn.execute(
+    rows = _cursor().execute(
         f"SELECT id, class, ST_AsGeoJSON(ST_FlipCoordinates(ST_Transform(geometry, '{project_crs}', '{crs}'))) "
         "FROM labels"
     ).fetchall()
@@ -131,8 +147,69 @@ def delete_labels(ids: list[str]) -> int:
         return 0
     conn = get_db()
     placeholders = ", ".join(["?"] * len(ids))
-    result = conn.execute(f"DELETE FROM labels WHERE id IN ({placeholders})", ids)
-    return result.fetchone()[0] if result.description else len(ids)
+    with _write_lock:
+        result = conn.execute(f"DELETE FROM labels WHERE id IN ({placeholders})", ids)
+        return result.fetchone()[0] if result.description else len(ids)
+
+
+def save_chip_label(chip_id: str, mask_png_bytes: bytes, label_class: str = "positive"):
+    """Vectorize a binary mask PNG and save as a polygon label in DuckDB.
+
+    The mask is georeferenced using the chip's projected geometry from DuckDB.
+    Returns the label ID on success.
+    """
+    chip = get_chip_by_id(chip_id)
+    if chip is None:
+        raise ValueError(f"Chip {chip_id} not found")
+
+    # Parse chip WKT to extract bounding box
+    # WKT vertex order from grid.py: NE, SE, SW, NW, NE (closing)
+    # Format: POLYGON((e2 n2, e2 n, e n, e n2, e2 n2))
+    wkt = chip["geometry_wkt"]
+    coord_text = re.search(r"\(\((.+)\)\)", wkt).group(1)
+    vertices = [tuple(map(float, p.strip().split())) for p in coord_text.split(",")]
+    eastings = [v[0] for v in vertices]
+    northings = [v[1] for v in vertices]
+    min_e, max_e = min(eastings), max(eastings)
+    min_n, max_n = min(northings), max(northings)
+
+    # Read mask PNG into a numpy array
+    img = Image.open(io.BytesIO(mask_png_bytes)).convert("L")
+    mask_array = np.array(img)
+    # Threshold to binary (any non-zero pixel = 1)
+    mask_array = (mask_array > 127).astype(np.uint8)
+
+    height, width = mask_array.shape
+
+    # Reject empty masks
+    if mask_array.sum() == 0:
+        raise ValueError("Mask is empty — nothing to save")
+
+    # Build affine: pixel (0,0) = top-left = (min_e, max_n)
+    transform = from_bounds(min_e, min_n, max_e, max_n, width, height)
+
+    # Vectorize mask to polygons in projected CRS
+    polygons = []
+    for geom, value in rasterio.features.shapes(mask_array, transform=transform):
+        if value == 1:
+            polygons.append(shape(geom))
+
+    if not polygons:
+        raise ValueError("Mask vectorization produced no polygons")
+
+    merged = unary_union(polygons)
+    simplified = merged.simplify(transform.a * 0.5, preserve_topology=True)
+
+    label_id = str(uuid.uuid4())
+    conn = get_db()
+    with _write_lock:
+        conn.execute(
+            "INSERT INTO labels (id, class, geometry) "
+            "VALUES (?, ?, ST_GeomFromText(?))",
+            [label_id, label_class, simplified.wkt],
+        )
+
+    return label_id
 
 
 def get_labels_for_chips(chip_ids: list[str]) -> dict[str, list[tuple[bytes, str]]]:
@@ -141,7 +218,7 @@ def get_labels_for_chips(chip_ids: list[str]) -> dict[str, list[tuple[bytes, str
         return {}
     conn = get_db()
     placeholders = ", ".join(["?"] * len(chip_ids))
-    rows = conn.execute(
+    rows = _cursor().execute(
         f"""
         SELECT c.id AS chip_id,
                ST_AsBinary(ST_Intersection(l.geometry, c.geometry)) AS label_geom,

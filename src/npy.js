@@ -5,6 +5,7 @@
  */
 export async function loadNpy(url) {
   const resp = await fetch(url)
+  if (!resp.ok) throw new Error(`Failed to load ${url}: ${resp.status}`)
   const buf = await resp.arrayBuffer()
   const view = new DataView(buf)
 

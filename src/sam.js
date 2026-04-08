@@ -128,6 +128,30 @@ export async function runSamDecoder(embedding, points, maskInput256 = null) {
 }
 
 /**
+ * Convert a binary mask (512x512) to a base64-encoded grayscale PNG for server upload.
+ * Mask value 1 → white (255), 0 → black (0).
+ */
+export function maskToPngBase64(mask, width = SAM_MASK_SIZE, height = SAM_MASK_SIZE) {
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext('2d')
+  const imageData = ctx.createImageData(width, height)
+
+  for (let i = 0; i < mask.length; i++) {
+    const offset = i * 4
+    const val = mask[i] === 1 ? 255 : 0
+    imageData.data[offset] = val     // R
+    imageData.data[offset + 1] = val // G
+    imageData.data[offset + 2] = val // B
+    imageData.data[offset + 3] = 255 // A (fully opaque)
+  }
+
+  ctx.putImageData(imageData, 0, 0)
+  return canvas.toDataURL('image/png').replace('data:image/png;base64,', '')
+}
+
+/**
  * Convert a binary mask (512x512) to a data URL for use as a map image overlay.
  * Mask pixels are rendered as semi-transparent blue.
  */
