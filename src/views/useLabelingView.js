@@ -63,7 +63,7 @@ function getMapBbox(map) {
 export function useLabelingView({ active, map, featureById, layerProviders = [] }) {
   const [selectedChipId, setSelectedChipId] = useState(null)
   const [clickPoints, setClickPoints] = useState([])
-  const [maskResults, setMaskResults] = useState(null)
+  const [maskInfo, setMaskInfo] = useState(null) // { count, scores } — lightweight summary for UI
   const [maskIndex, setMaskIndex] = useState(-1)
   const [showLabels, setShowLabels] = useState(false)
   const [previewGeojson, setPreviewGeojson] = useState(null)
@@ -97,7 +97,6 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
   useEffect(() => { showLabelsRef.current = showLabels }, [showLabels])
   useEffect(() => { previewGeojsonRef.current = previewGeojson }, [previewGeojson])
   useEffect(() => { deleteModeRef.current = deleteMode }, [deleteMode])
-  useEffect(() => { maskResultsRef.current = maskResults }, [maskResults])
   useEffect(() => { maskIndexRef.current = maskIndex }, [maskIndex])
   useEffect(() => { paintModeRef.current = paintbrush.paintMode }, [paintbrush.paintMode])
 
@@ -270,7 +269,9 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
       clearPointMarkers()
       points.length = 0
       lastLowResMaskRef.current = null
-      setMaskResults(null)
+      maskResultsRef.current = null
+      currentSamMaskRef.current = null
+      setMaskInfo(null)
       setMaskIndex(-1)
       setClickPoints([])
       removePreviewLayer()
@@ -354,7 +355,9 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
 
       const maskPrior = getMaskPrior()
       const { masks, scores, lowResMasks } = await runSamDecoder(chip.embedding, points, maskPrior)
-      setMaskResults({ masks, scores, lowResMasks, imageCoords: chip.corners })
+      maskResultsRef.current = { masks, scores, lowResMasks, imageCoords: chip.corners }
+      currentSamMaskRef.current = masks[0]
+      setMaskInfo({ count: masks.length, scores })
       setMaskIndex(0)
       showMask(masks[0], chip.corners)
 
@@ -444,7 +447,9 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
         if (map.getLayer('mask-overlay')) map.removeLayer('mask-overlay')
         if (map.getSource('mask-overlay')) map.removeSource('mask-overlay')
         lastLowResMaskRef.current = null
-        setMaskResults(null)
+        maskResultsRef.current = null
+        currentSamMaskRef.current = null
+        setMaskInfo(null)
         setMaskIndex(-1)
         return
       }
@@ -452,7 +457,9 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
 
       const maskPrior = getMaskPrior()
       const { masks, scores, lowResMasks } = await runSamDecoder(chip.embedding, points, maskPrior)
-      setMaskResults({ masks, scores, lowResMasks, imageCoords: chip.corners })
+      maskResultsRef.current = { masks, scores, lowResMasks, imageCoords: chip.corners }
+      currentSamMaskRef.current = masks[0]
+      setMaskInfo({ count: masks.length, scores })
       setMaskIndex(0)
       showMask(masks[0], chip.corners)
       if (lowResMasks && lowResMasks.length > 0) {
@@ -697,6 +704,7 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
         const idx = e.key === ']'
           ? (prev + 1) % r.masks.length
           : (prev - 1 + r.masks.length) % r.masks.length
+        currentSamMaskRef.current = r.masks[idx]
         showMask(r.masks[idx], r.imageCoords)
         if (r.lowResMasks && r.lowResMasks[idx]) {
           lastLowResMaskRef.current = new Float32Array(r.lowResMasks[idx])
@@ -769,20 +777,19 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
     ...layerProviders.flatMap(lp => lp.controls || []),
   ], [showLabels, toggleLabels, layerProviders])
 
-  // Get the current SAM mask for compositing
-  const currentSamMask = useMemo(
-    () => maskResults && maskIndex >= 0 ? maskResults.masks[maskIndex] : null,
-    [maskResults, maskIndex],
-  )
+  // Current SAM mask for compositing — kept in a ref so large binary data
+  // never enters React state. Updated by effects/handlers that change masks.
+  const currentSamMaskRef = useRef(null)
+
   return {
     selectedChipId,
     clickPoints,
-    maskResults,
+    maskInfo,
     maskIndex,
     pluginControls,
     paintbrush,
     chipCorners,
-    currentSamMask,
+    currentSamMaskRef,
     handleMaskUpdate,
     previewGeojson,
     deleteMode,

@@ -11,7 +11,7 @@ export default function PaintbrushOverlay({
   brushSize,
   paintAt,
   compositeMask,
-  samMask,
+  samMaskRef,
   onMaskUpdate,
 }) {
   const paintingRef = useRef(false)
@@ -90,7 +90,7 @@ export default function PaintbrushOverlay({
     if (inFlightRef.current) return
     inFlightRef.current = true
     try {
-      const composited = compositeMask(samMask)
+      const composited = compositeMask(samMaskRef.current)
       const dataURL = await maskToDataURL(composited)
 
       const src = map.getSource(PAINT_SOURCE)
@@ -111,7 +111,7 @@ export default function PaintbrushOverlay({
     } finally {
       inFlightRef.current = false
     }
-  }, [map, chipCorners, compositeMask, samMask])
+  }, [map, chipCorners, compositeMask, samMaskRef])
 
   // Clean up the MapLibre source/layer when paint mode deactivates or chip changes
   useEffect(() => {
@@ -190,7 +190,7 @@ export default function PaintbrushOverlay({
       // Flush final render and notify parent
       updateOverlay()
       if (onMaskUpdate) {
-        onMaskUpdate(compositeMask(samMask))
+        onMaskUpdate(compositeMask(samMaskRef.current))
       }
     }
 
@@ -208,7 +208,7 @@ export default function PaintbrushOverlay({
         map.dragPan.enable()
       }
     }
-  }, [map, paintMode, chipCorners, brushSize, screenToCanvas, paintAt, updateOverlay, onMaskUpdate, compositeMask, samMask])
+  }, [map, paintMode, chipCorners, brushSize, screenToCanvas, paintAt, updateOverlay, onMaskUpdate, compositeMask, samMaskRef])
 
   // No DOM element needed — everything renders through MapLibre
   return null

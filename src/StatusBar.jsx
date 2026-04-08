@@ -1,4 +1,4 @@
-function StatusBar({ selectedChipId, clickPoints, maskIndex, maskResults, paintMode, brushSize, deleteMode }) {
+function StatusBar({ selectedChipId, clickPoints, maskIndex, maskInfo, paintMode, brushSize, deleteMode }) {
   if (deleteMode) {
     return (
       <div className="status-bar status-bar-active" style={{ borderColor: '#ef4444' }}>
@@ -31,12 +31,12 @@ function StatusBar({ selectedChipId, clickPoints, maskIndex, maskResults, paintM
     )
   }
 
-  if (maskIndex >= 0 && maskResults) {
+  if (maskIndex >= 0 && maskInfo) {
     return (
       <div className="status-bar status-bar-active">
         <span className="status-bar-mask">
-          Mask {maskIndex + 1}/{maskResults.masks.length}
-          {' '}&middot; IoU {maskResults.scores[maskIndex].toFixed(2)}
+          Mask {maskIndex + 1}/{maskInfo.count}
+          {' '}&middot; IoU {maskInfo.scores[maskIndex].toFixed(2)}
           {' '}&middot; {clickPoints.length} point{clickPoints.length !== 1 ? 's' : ''}
         </span>
         <span className="status-bar-hints">
