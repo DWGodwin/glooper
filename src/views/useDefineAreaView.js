@@ -3,10 +3,12 @@ import { data } from '../data.js'
 
 export function useDefineAreaView({ active, map, chipGrid }) {
   const [drawMode, setDrawMode] = useState(false)
+  const [deleteMode, setDeleteMode] = useState(false)
   const [activeSplit, setActiveSplit] = useState('train')
   const [prefetchJob, setPrefetchJob] = useState(null)
 
   const drawModeRef = useRef(false)
+  const deleteModeRef = useRef(false)
   const activeSplitRef = useRef('train')
   const isDrawingRef = useRef(false)
   const drawStartRef = useRef(null)
@@ -14,19 +16,20 @@ export function useDefineAreaView({ active, map, chipGrid }) {
 
   // Keep refs in sync with state
   useEffect(() => { drawModeRef.current = drawMode }, [drawMode])
+  useEffect(() => { deleteModeRef.current = deleteMode }, [deleteMode])
   useEffect(() => { activeSplitRef.current = activeSplit }, [activeSplit])
 
-  // Cursor management for draw mode
+  // Cursor management for draw/delete mode
   useEffect(() => {
     if (!map) return
-    if (drawMode) {
+    if (drawMode || deleteMode) {
       map.dragPan.disable()
       map.getCanvas().style.cursor = 'crosshair'
     } else {
       map.dragPan.enable()
       map.getCanvas().style.cursor = ''
     }
-  }, [map, drawMode])
+  }, [map, drawMode, deleteMode])
 
   // Add draw-rect source/layer
   useEffect(() => {
@@ -58,19 +61,27 @@ export function useDefineAreaView({ active, map, chipGrid }) {
     })
   }, [map])
 
+  // Update draw-rect color based on mode
+  useEffect(() => {
+    if (!map || !map.getLayer('draw-rect-fill')) return
+    const color = deleteMode ? '#ef4444' : '#3b82f6'
+    map.setPaintProperty('draw-rect-fill', 'fill-color', color)
+    map.setPaintProperty('draw-rect-outline', 'line-color', color)
+  }, [map, deleteMode])
+
   // Draw interaction handlers — active only when this view is active
   useEffect(() => {
     if (!map || !active) return
 
     function onMouseDown(e) {
-      if (!drawModeRef.current) return
+      if (!drawModeRef.current && !deleteModeRef.current) return
       e.preventDefault()
       isDrawingRef.current = true
       drawStartRef.current = { lng: e.lngLat.lng, lat: e.lngLat.lat }
     }
 
     function onMouseMove(e) {
-      if (drawModeRef.current && !isDrawingRef.current) {
+      if ((drawModeRef.current || deleteModeRef.current) && !isDrawingRef.current) {
         map.getCanvas().style.cursor = 'crosshair'
       }
 
@@ -109,10 +120,33 @@ export function useDefineAreaView({ active, map, chipGrid }) {
       // Clear draw preview
       map.getSource('draw-rect').setData({ type: 'FeatureCollection', features: [] })
 
-      // Skip tiny accidental clicks
       const swPx = map.project(sw)
       const nePx = map.project(ne)
-      if (Math.abs(nePx.x - swPx.x) < 5 && Math.abs(nePx.y - swPx.y) < 5) return
+      const isTinyClick = Math.abs(nePx.x - swPx.x) < 5 && Math.abs(nePx.y - swPx.y) < 5
+
+      if (deleteModeRef.current) {
+        if (isTinyClick) {
+          // Point delete
+          data.deleteStudyArea({ point: [start.lng, start.lat] }).then((res) => {
+            console.log(`Deleted ${res.chips_deleted} chip(s), ${res.labels_deleted} label(s)`)
+            chipGrid.refreshChips()
+          })
+        } else {
+          // Box delete
+          const bbox = [
+            Math.min(start.lng, end.lng), Math.min(start.lat, end.lat),
+            Math.max(start.lng, end.lng), Math.max(start.lat, end.lat),
+          ]
+          data.deleteStudyArea({ bbox }).then((res) => {
+            console.log(`Deleted ${res.chips_deleted} chip(s), ${res.labels_deleted} label(s)`)
+            chipGrid.refreshChips()
+          })
+        }
+        return
+      }
+
+      // Skip tiny accidental clicks for draw mode
+      if (isTinyClick) return
 
       const split = activeSplitRef.current
 
@@ -159,12 +193,20 @@ export function useDefineAreaView({ active, map, chipGrid }) {
   }, [prefetchJobId])
 
   const toggleDraw = useCallback(() => {
+    setDeleteMode(false)
     setDrawMode((prev) => !prev)
+  }, [])
+
+  const toggleDelete = useCallback(() => {
+    setDrawMode(false)
+    setDeleteMode((prev) => !prev)
   }, [])
 
   return {
     drawMode,
     toggleDraw,
+    deleteMode,
+    toggleDelete,
     activeSplit,
     setActiveSplit,
     prefetchJob,

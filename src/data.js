@@ -7,6 +7,7 @@ export const data = {
   chipImageUrl:  (id) => STATIC ? `${BASE}data/chips/${id}.png`          : `${API}/api/chips/${id}/image`,
   embeddingUrl:  (id) => STATIC ? `${BASE}data/sam_embeddings/${id}.npy` : `${API}/api/chips/${id}/sam-embedding`,
   samDecoderUrl: ()   => STATIC ? `${BASE}data/sam_decoder.onnx`         : `${API}/api/models/sam-decoder`,
+  labelsUrl:     (bbox) => bbox ? `${API}/api/labels?bbox=${bbox}` : `${API}/api/labels`,
   createStudyArea: (bbox, split) => fetch(`${API}/api/study-areas`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -18,4 +19,30 @@ export const data = {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ids }),
   }).then(r => r.json()),
+  saveChipLabel: (chipId, maskPngBase64, labelClass = 'positive') =>
+    fetch(`${API}/api/chips/${chipId}/label`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mask: maskPngBase64, label_class: labelClass }),
+    }).then(r => r.json()),
+  vectorizePreview: (chipId, maskPngBase64, labelClass = 'positive', vectorization = null) =>
+    fetch(`${API}/api/chips/${chipId}/vectorize-preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mask: maskPngBase64, label_class: labelClass, ...(vectorization && { vectorization }) }),
+    }).then(r => r.json()),
+  getVectorizationConfig: (labelClass = null) =>
+    fetch(`${API}/api/config/vectorization${labelClass ? `/${labelClass}` : ''}`).then(r => r.json()),
+  deleteLabelsByGeometry: ({ point, bbox }) =>
+    fetch(`${API}/api/labels/by-geometry`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...(point && { point }), ...(bbox && { bbox }) }),
+    }).then(r => r.json()),
+  deleteStudyArea: ({ point, bbox }) =>
+    fetch(`${API}/api/study-areas`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...(point && { point }), ...(bbox && { bbox }) }),
+    }).then(r => r.json()),
 }

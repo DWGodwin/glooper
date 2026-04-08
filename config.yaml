@@ -13,13 +13,24 @@ worker_port: 9100
 chip_size_px: 448
 
 # Plugins
-plugins:
-  - name: dino
-    model: dinov2_vits14
-    input_size: 448
-    patch_size: 14
-  - name: cam
-    requires_embeddings: dino
+# plugins:
+#   - name: dino
+#     model: dinov2_vits14
+#     input_size: 448
+#     patch_size: 14
+#   - name: cam
+#     requires_embeddings: dino
+
+# Vectorization: how binary masks become vector polygons
+vectorization:
+  strategy: simplify        # simplify | convex_hull
+  tolerance_px: 1.5       # Douglas-Peucker tolerance in pixels (simplify only)
+  min_area_px: 4            # drop components smaller than N pixels
+#   max_vertices: null         # iteratively simplify until under this vertex count
+#   class_overrides:           # per-class overrides (merged on top of base)
+#     solar_panel:
+#       strategy: min_rotated_rect
+#       tolerance_px: 2
 
 # Pipeline: imagery provider (read by the chip worker)
 imagery_provider: mass_orthos

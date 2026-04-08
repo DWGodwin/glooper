@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import maplibregl from 'maplibre-gl'
-import { initSamDecoder, isDecoderReady, runSamDecoder, maskToDataURL } from '../sam'
+import { initSamDecoder, isDecoderReady, runSamDecoder, maskToDataURL, maskToPngBase64 } from '../sam'
 import { loadNpy } from '../npy'
 import { data } from '../data.js'
 import { usePaintbrush } from '../hooks/usePaintbrush'
@@ -50,11 +50,24 @@ function lonLatToPixel(lon, lat, corners) {
   return { u, v, x: u * 512, y: v * 512 }
 }
 
+function raiseLabels(map) {
+  if (map.getLayer('labels-fill')) map.moveLayer('labels-fill')
+  if (map.getLayer('labels-outline')) map.moveLayer('labels-outline')
+}
+
+function getMapBbox(map) {
+  const bounds = map.getBounds()
+  return `${bounds.getWest()},${bounds.getSouth()},${bounds.getEast()},${bounds.getNorth()}`
+}
+
 export function useLabelingView({ active, map, featureById, layerProviders = [] }) {
   const [selectedChipId, setSelectedChipId] = useState(null)
   const [clickPoints, setClickPoints] = useState([])
   const [maskResults, setMaskResults] = useState(null)
   const [maskIndex, setMaskIndex] = useState(-1)
+  const [showLabels, setShowLabels] = useState(false)
+  const [previewGeojson, setPreviewGeojson] = useState(null)
+  const [deleteMode, setDeleteMode] = useState(false)
   const paintbrush = usePaintbrush()
 
   // Mutable handler state (refs)
@@ -63,13 +76,26 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
   const lastLowResMaskRef = useRef(null)
   const pointMarkersRef = useRef([])
   const maskResultsRef = useRef(null)
+  const maskIndexRef = useRef(-1)
   const selectingChipRef = useRef(false)
+  const selectGenRef = useRef(0)
   const samInitRef = useRef(false)
   const paintModeRef = useRef(null)
   const layerProvidersRef = useRef(layerProviders)
+  const showLabelsRef = useRef(false)
+  const previewGeojsonRef = useRef(null)
+  const pendingMaskRef = useRef(null)
+  const deleteModeRef = useRef(false)
+  const deleteDrawingRef = useRef(false)
+  const deleteStartRef = useRef(null)
+  const deleteRectInitRef = useRef(false)
 
   useEffect(() => { layerProvidersRef.current = layerProviders }, [layerProviders])
+  useEffect(() => { showLabelsRef.current = showLabels }, [showLabels])
+  useEffect(() => { previewGeojsonRef.current = previewGeojson }, [previewGeojson])
+  useEffect(() => { deleteModeRef.current = deleteMode }, [deleteMode])
   useEffect(() => { maskResultsRef.current = maskResults }, [maskResults])
+  useEffect(() => { maskIndexRef.current = maskIndex }, [maskIndex])
   useEffect(() => { paintModeRef.current = paintbrush.paintMode }, [paintbrush.paintMode])
 
   // Sync layer provider visibility (e.g. CAM toggle)
@@ -80,12 +106,110 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
     }
   }, [map, layerProviders])
 
+  // Delete mode: cursor + dragPan management
+  useEffect(() => {
+    if (!map) return
+    if (deleteMode) {
+      map.getCanvas().style.cursor = 'crosshair'
+    } else {
+      map.getCanvas().style.cursor = ''
+    }
+  }, [map, deleteMode])
+
+  // Add delete-rect source/layer once
+  useEffect(() => {
+    if (!map || deleteRectInitRef.current) return
+    deleteRectInitRef.current = true
+    map.addSource('delete-rect', {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] },
+    })
+    map.addLayer({
+      id: 'delete-rect-fill',
+      type: 'fill',
+      source: 'delete-rect',
+      paint: { 'fill-color': '#ef4444', 'fill-opacity': 0.15 },
+    })
+    map.addLayer({
+      id: 'delete-rect-outline',
+      type: 'line',
+      source: 'delete-rect',
+      paint: { 'line-color': '#ef4444', 'line-width': 2, 'line-dasharray': [4, 2] },
+    })
+  }, [map])
+
   // Init SAM decoder once
   useEffect(() => {
     if (samInitRef.current) return
     samInitRef.current = true
     initSamDecoder().then(() => console.log('SAM decoder ready'))
   }, [])
+
+  // Labels layer: auto-sync with server via bbox filtering, polling, and moveend
+  useEffect(() => {
+    if (!map || !active || !showLabels) {
+      if (map) {
+        if (map.getLayer('labels-fill')) map.removeLayer('labels-fill')
+        if (map.getLayer('labels-outline')) map.removeLayer('labels-outline')
+        if (map.getSource('labels')) map.removeSource('labels')
+      }
+      return
+    }
+
+    let cancelled = false
+    let debounceTimer = null
+
+    function fetchLabels() {
+      const bbox = getMapBbox(map)
+      fetch(data.labelsUrl(bbox))
+        .then(r => r.json())
+        .then(geojson => {
+          if (cancelled) return
+          if (map.getSource('labels')) {
+            map.getSource('labels').setData(geojson)
+          } else {
+            map.addSource('labels', { type: 'geojson', data: geojson })
+            map.addLayer({
+              id: 'labels-fill',
+              type: 'fill',
+              source: 'labels',
+              paint: {
+                'fill-color': '#22c55e',
+                'fill-opacity': 0.35,
+              },
+            })
+            map.addLayer({
+              id: 'labels-outline',
+              type: 'line',
+              source: 'labels',
+              paint: {
+                'line-color': '#16a34a',
+                'line-width': 1.5,
+              },
+            })
+          }
+        })
+    }
+
+    function onMoveEnd() {
+      clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(fetchLabels, 1000)
+    }
+
+    fetchLabels()
+    const pollInterval = setInterval(fetchLabels, 5000)
+    map.on('moveend', onMoveEnd)
+
+    return () => {
+      cancelled = true
+      clearInterval(pollInterval)
+      clearTimeout(debounceTimer)
+      map.off('moveend', onMoveEnd)
+      if (map.getLayer('labels-fill')) map.removeLayer('labels-fill')
+      if (map.getLayer('labels-outline')) map.removeLayer('labels-outline')
+      if (map.getSource('labels')) map.removeSource('labels')
+    }
+  }, [map, active, showLabels])
 
   // Event handlers — active only when this view is active
   useEffect(() => {
@@ -94,6 +218,34 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
     const chip = chipRef.current
     const points = pointsRef.current
     const markers = pointMarkersRef.current
+
+    function showPreviewLayer(geojson) {
+      if (map.getLayer('preview-fill')) map.removeLayer('preview-fill')
+      if (map.getLayer('preview-outline')) map.removeLayer('preview-outline')
+      if (map.getSource('preview')) map.removeSource('preview')
+      map.addSource('preview', { type: 'geojson', data: geojson })
+      map.addLayer({
+        id: 'preview-fill',
+        type: 'fill',
+        source: 'preview',
+        paint: { 'fill-color': '#22c55e', 'fill-opacity': 0.4 },
+      })
+      map.addLayer({
+        id: 'preview-outline',
+        type: 'line',
+        source: 'preview',
+        paint: { 'line-color': '#16a34a', 'line-width': 2 },
+      })
+    }
+
+    function removePreviewLayer() {
+      if (map.getLayer('preview-fill')) map.removeLayer('preview-fill')
+      if (map.getLayer('preview-outline')) map.removeLayer('preview-outline')
+      if (map.getSource('preview')) map.removeSource('preview')
+      previewGeojsonRef.current = null
+      pendingMaskRef.current = null
+      setPreviewGeojson(null)
+    }
 
     function removeOverlays() {
       for (const id of ['mask-overlay', 'chip-overlay']) {
@@ -120,6 +272,7 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
       setMaskResults(null)
       setMaskIndex(-1)
       setClickPoints([])
+      removePreviewLayer()
     }
 
     function deselectChip() {
@@ -170,6 +323,7 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
         type: 'raster',
         source: 'mask-overlay',
       })
+      raiseLabels(map)
     }
 
     function getMaskPrior() {
@@ -213,6 +367,8 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
       const feature = featureById.current[chipId]
       if (!feature) return
 
+      const gen = ++selectGenRef.current
+
       // Vertex order from source: [NE, SE, SW, NW, NE(closing)]
       // MapLibre image coords: [TL, TR, BR, BL] = [NW, NE, SE, SW]
       const coords = feature.geometry.coordinates[0]
@@ -229,6 +385,7 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
         source: 'chip-overlay',
         paint: { 'raster-resampling': 'nearest' },
       })
+      raiseLabels(map)
 
       // Let layer providers add their overlays
       for (const lp of layerProvidersRef.current) {
@@ -264,8 +421,15 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
         1.5,
       ])
 
-      const embedding = await loadNpy(data.embeddingUrl(chipId))
-      chip.embedding = embedding
+      try {
+        const embedding = await loadNpy(data.embeddingUrl(chipId))
+        if (selectGenRef.current !== gen) return // stale — user selected another chip
+        chip.embedding = embedding
+      } catch (e) {
+        console.error(`Failed to load embedding for ${chipId}:`, e)
+        if (selectGenRef.current !== gen) return
+        chip.embedding = null
+      }
     }
 
     async function rerunSam() {
@@ -300,7 +464,79 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
     }
 
     // Map click handlers
+    // ── Delete mode helpers ──
+    function refreshLabelsLayer() {
+      if (showLabelsRef.current && map.getSource('labels')) {
+        fetch(data.labelsUrl(getMapBbox(map))).then(r => r.json()).then(geojson => {
+          if (map.getSource('labels')) map.getSource('labels').setData(geojson)
+        })
+      }
+    }
+
+    function onDeleteMouseDown(e) {
+      if (!deleteModeRef.current) return
+      e.preventDefault()
+      deleteDrawingRef.current = true
+      deleteStartRef.current = { lng: e.lngLat.lng, lat: e.lngLat.lat }
+      map.dragPan.disable()
+    }
+
+    function onDeleteMouseMove(e) {
+      if (!deleteDrawingRef.current || !deleteStartRef.current) return
+      const start = deleteStartRef.current
+      const current = e.lngLat
+      const coords = [
+        [start.lng, start.lat],
+        [current.lng, start.lat],
+        [current.lng, current.lat],
+        [start.lng, current.lat],
+        [start.lng, start.lat],
+      ]
+      map.getSource('delete-rect').setData({
+        type: 'FeatureCollection',
+        features: [{
+          type: 'Feature',
+          geometry: { type: 'Polygon', coordinates: [coords] },
+          properties: {},
+        }],
+      })
+    }
+
+    function onDeleteMouseUp(e) {
+      if (!deleteDrawingRef.current || !deleteStartRef.current) return
+      deleteDrawingRef.current = false
+      map.dragPan.enable()
+
+      const end = e.lngLat
+      const start = deleteStartRef.current
+      deleteStartRef.current = null
+
+      map.getSource('delete-rect').setData({ type: 'FeatureCollection', features: [] })
+
+      // Check if this was a tiny click (point delete) vs a real box drag
+      const swPx = map.project([Math.min(start.lng, end.lng), Math.min(start.lat, end.lat)])
+      const nePx = map.project([Math.max(start.lng, end.lng), Math.max(start.lat, end.lat)])
+      if (Math.abs(nePx.x - swPx.x) < 5 && Math.abs(nePx.y - swPx.y) < 5) {
+        // Point delete
+        data.deleteLabelsByGeometry({ point: [start.lng, start.lat] }).then((res) => {
+          console.log(`Deleted ${res.deleted} label(s)`)
+          refreshLabelsLayer()
+        })
+      } else {
+        // Box delete
+        const bbox = [
+          Math.min(start.lng, end.lng), Math.min(start.lat, end.lat),
+          Math.max(start.lng, end.lng), Math.max(start.lat, end.lat),
+        ]
+        data.deleteLabelsByGeometry({ bbox }).then((res) => {
+          console.log(`Deleted ${res.deleted} label(s)`)
+          refreshLabelsLayer()
+        })
+      }
+    }
+
     function onChipFillClick(e) {
+      if (deleteModeRef.current) return
       const chipId = e.features[0].properties.id
       if (chipId !== chip.id) {
         selectingChipRef.current = true
@@ -309,6 +545,7 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
     }
 
     function onMapClick(e) {
+      if (deleteModeRef.current) return
       if (selectingChipRef.current) {
         selectingChipRef.current = false
         return
@@ -320,6 +557,7 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
 
     function onContextMenu(e) {
       e.preventDefault()
+      if (deleteModeRef.current) return
       if (!chip.id) return
       if (paintModeRef.current) return
       const rect = map.getCanvas().getBoundingClientRect()
@@ -332,11 +570,61 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
       if (e.key === 'Backspace') {
         e.preventDefault()
         if (paintModeRef.current) return
+        if (previewGeojsonRef.current) {
+          removePreviewLayer()
+          return
+        }
         if (points.length > 0) {
           clearSegmentation()
         } else {
           deselectChip()
         }
+        return
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        if (!chip.id) return
+
+        // Step 2: preview is showing — persist the label
+        if (previewGeojsonRef.current && pendingMaskRef.current) {
+          const pendingBase64 = pendingMaskRef.current
+          data.saveChipLabel(chip.id, pendingBase64, 'positive').then((res) => {
+            if (res.ok) {
+              console.log('Label saved:', res.label_id)
+              clearSegmentation()
+              paintbrush.clearCorrections()
+              if (showLabelsRef.current && map.getSource('labels')) {
+                fetch(data.labelsUrl(getMapBbox(map))).then(r => r.json()).then(geojson => {
+                  if (map.getSource('labels')) map.getSource('labels').setData(geojson)
+                })
+              }
+            } else {
+              console.error('Failed to save label:', res.detail || res)
+            }
+          })
+          return
+        }
+
+        // Step 1: generate preview
+        const r = maskResultsRef.current
+        if (!r || r.masks.length === 0) return
+        const idx = maskIndexRef.current >= 0 ? maskIndexRef.current : 0
+        const samMask = r.masks[idx]
+        const finalMask = paintbrush.compositeMask(samMask)
+        const base64 = maskToPngBase64(finalMask)
+        pendingMaskRef.current = base64
+        data.vectorizePreview(chip.id, base64, 'positive').then((feature) => {
+          if (feature.geometry) {
+            const geojson = { type: 'FeatureCollection', features: [feature] }
+            previewGeojsonRef.current = geojson
+            setPreviewGeojson(geojson)
+            showPreviewLayer(geojson)
+            console.log(`Preview: ${feature.properties.vertex_count} vertices — Enter to save, Backspace to dismiss`)
+          } else {
+            console.error('Preview failed:', feature.detail || feature)
+            pendingMaskRef.current = null
+          }
+        })
         return
       }
       if (e.key === 'Escape') {
@@ -348,6 +636,21 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
         deselectChip()
         return
       }
+
+      // Delete mode toggle
+      if (e.key === 'd' || e.key === 'D') {
+        if (deleteModeRef.current) {
+          setDeleteMode(false)
+          map.dragPan.enable()
+        } else {
+          setDeleteMode(true)
+          paintbrush.setPaintMode(null)
+          setShowLabels(true)
+        }
+        return
+      }
+
+      if (deleteModeRef.current) return
 
       // Paintbrush shortcuts
       if (e.key === 'b' || e.key === 'B') {
@@ -412,6 +715,9 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
     document.addEventListener('keydown', handleKeyDown)
     map.on('mousemove', 'chips-fill', onChipMouseMove)
     map.on('mouseleave', 'chips-fill', onChipMouseLeave)
+    map.on('mousedown', onDeleteMouseDown)
+    map.on('mousemove', onDeleteMouseMove)
+    map.on('mouseup', onDeleteMouseUp)
 
     return () => {
       map.off('click', 'chips-fill', onChipFillClick)
@@ -420,6 +726,9 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
       document.removeEventListener('keydown', handleKeyDown)
       map.off('mousemove', 'chips-fill', onChipMouseMove)
       map.off('mouseleave', 'chips-fill', onChipMouseLeave)
+      map.off('mousedown', onDeleteMouseDown)
+      map.off('mousemove', onDeleteMouseMove)
+      map.off('mouseup', onDeleteMouseUp)
     }
   }, [map, active, featureById, paintbrush])
 
@@ -439,10 +748,16 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
       type: 'raster',
       source: 'mask-overlay',
     })
+    raiseLabels(map)
   }, [map])
 
   // Collect controls from all layer providers
-  const pluginControls = layerProviders.flatMap(lp => lp.controls || [])
+  const labelsControl = {
+    label: 'Labels',
+    active: showLabels,
+    onToggle: () => setShowLabels(prev => !prev),
+  }
+  const pluginControls = [labelsControl, ...layerProviders.flatMap(lp => lp.controls || [])]
 
   // Get the current SAM mask for compositing
   const currentSamMask = maskResults && maskIndex >= 0 ? maskResults.masks[maskIndex] : null
@@ -458,5 +773,7 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
     chipCorners,
     currentSamMask,
     handleMaskUpdate,
+    previewGeojson,
+    deleteMode,
   }
 }

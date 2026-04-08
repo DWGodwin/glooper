@@ -229,7 +229,7 @@ def _run_embeddings(job_id: str, chip_ids: list[str]):
         return
 
     dataset = ChipDataset(need, _chips_dir)
-    loader = DataLoader(dataset, batch_size=4, num_workers=0, collate_fn=sam_collate)
+    loader = DataLoader(dataset, batch_size=1, num_workers=0, collate_fn=sam_collate)
 
     for batch in loader:
         pixel_values = batch["pixel_values"].to(_sam_device)

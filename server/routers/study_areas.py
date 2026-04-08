@@ -1,11 +1,11 @@
-from typing import Literal
+from typing import Literal, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from server.config import get_config
-from server.db import insert_chips
+from server.db import insert_chips, delete_chips_by_geometry
 from server.grid import compute_grid
 from server.worker_client import WorkerUnavailable, start_batch, get_job_status
 
@@ -47,6 +47,43 @@ def create_study_area(req: CreateStudyAreaRequest):
                 "warning": "Chip worker unavailable — chips inserted but not prefetched"}
 
     return {"ok": True, "count": len(chips), "job_id": job_id}
+
+
+class SpatialDeleteRequest(BaseModel):
+    point: Optional[list[float]] = None  # [lon, lat]
+    bbox: Optional[list[float]] = None   # [west, south, east, north]
+
+
+@router.delete("/study-areas")
+def delete_study_area(req: SpatialDeleteRequest):
+    if not req.point and not req.bbox:
+        raise HTTPException(status_code=400, detail="Provide 'point' or 'bbox'")
+
+    from pyproj import Transformer
+
+    cfg = get_config()
+    project_crs = cfg["crs"]
+    transformer = Transformer.from_crs("EPSG:4326", project_crs, always_xy=True)
+
+    if req.point:
+        lon, lat = req.point
+        x, y = transformer.transform(lon, lat)
+        buf = 1.5
+        wkt = (
+            f"POLYGON(({x - buf} {y - buf}, {x + buf} {y - buf}, "
+            f"{x + buf} {y + buf}, {x - buf} {y + buf}, {x - buf} {y - buf}))"
+        )
+    else:
+        west, south, east, north = req.bbox
+        min_x, min_y = transformer.transform(west, south)
+        max_x, max_y = transformer.transform(east, north)
+        wkt = (
+            f"POLYGON(({min_x} {min_y}, {max_x} {min_y}, "
+            f"{max_x} {max_y}, {min_x} {max_y}, {min_x} {min_y}))"
+        )
+
+    result = delete_chips_by_geometry(wkt)
+    return result
 
 
 @router.get("/prefetch/{job_id}")

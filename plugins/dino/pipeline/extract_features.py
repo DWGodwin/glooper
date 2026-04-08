@@ -72,8 +72,8 @@ def main():
     dataset = ChipDataset(chip_ids, CHIPS_DIR)
     loader = DataLoader(
         dataset,
-        batch_size=4,
-        num_workers=4,
+        batch_size=1,
+        num_workers=0,
         collate_fn=dino_collate,
         pin_memory=(device == "cuda"),
     )
