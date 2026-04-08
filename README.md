@@ -2,7 +2,7 @@
 
 Try it out at [https://dwgodwin.github.io/glooper/](https://dwgodwin.github.io/glooper/)!
 
-![glooper_demo](https://github.com/user-attachments/assets/b2854e49-2db5-4a1d-b38c-9b7b0ef764a4)
+![test-recording](https://github.com/user-attachments/assets/af35153b-3d6b-4c47-961f-5021437ea73b)
 
 ## The Motivation
 
