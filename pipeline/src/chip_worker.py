@@ -45,6 +45,7 @@ _executor = ThreadPoolExecutor(max_workers=4)
 _sam_model = None
 _sam_device = None
 _embeddings_dir: Path | None = None
+_sam_batch_size: int = 4
 
 SAM_CHECKPOINT_URL = "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth"
 MODELS_DIR = Path(__file__).parent / "models"
@@ -59,7 +60,7 @@ def _load_config():
 
 
 def _init_provider(config: dict):
-    global _provider, _chips_dir, _png_dir, _embeddings_dir
+    global _provider, _chips_dir, _png_dir, _embeddings_dir, _sam_batch_size
     name = config.get("imagery_provider", "static")
     provider_config = config.get("imagery_provider_config", {})
     provider_config.setdefault("crs", config.get("crs", "EPSG:4326"))
@@ -72,6 +73,7 @@ def _init_provider(config: dict):
     _png_dir.mkdir(parents=True, exist_ok=True)
     _embeddings_dir = data_dir / "sam_embeddings"
     _embeddings_dir.mkdir(parents=True, exist_ok=True)
+    _sam_batch_size = config.get("sam_batch_size", 4)
     logger.info("Provider '%s' loaded, chips dir: %s, png dir: %s", name, _chips_dir, _png_dir)
 
 
@@ -229,7 +231,7 @@ def _run_embeddings(job_id: str, chip_ids: list[str]):
         return
 
     dataset = ChipDataset(need, _chips_dir)
-    loader = DataLoader(dataset, batch_size=1, num_workers=0, collate_fn=sam_collate)
+    loader = DataLoader(dataset, batch_size=_sam_batch_size, num_workers=0, collate_fn=sam_collate)
 
     for batch in loader:
         pixel_values = batch["pixel_values"].to(_sam_device)

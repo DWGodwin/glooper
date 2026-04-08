@@ -11,6 +11,7 @@ worker_host: "localhost"
 worker_port: 9100
 
 chip_size_px: 448
+sam_batch_size: 16          # SAM encoder batch size (lower if you hit OOM)
 
 # Plugins
 # plugins:

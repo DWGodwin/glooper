@@ -54,13 +54,6 @@ class MassOrthosProvider:
         catalog = gpd.read_file(url)
         src_crs = str(catalog.crs)
         logger.info("Loaded catalog (%s), reprojecting to %s", src_crs, self._crs)
-        # defensively use rasterio warping operations over geopandas to_crs to avoid PYPROJ issues
-        # TODO: look into the environment in pixi to try and fix this if possible
-        # catalog = catalog.set_geometry(
-        #     [shapely.geometry.shape(transform_geom(src_crs, self._crs, shapely.geometry.mapping(g)))
-        #      for g in catalog.geometry],
-        #     crs=self._crs,
-        # )
         catalog = catalog.to_crs(self._crs)
         self._catalog = catalog
         return self._catalog
