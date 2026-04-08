@@ -11,12 +11,13 @@ export default function PaintbrushOverlay({
   brushSize,
   paintAt,
   compositeMask,
-  samMask,
+  samMaskRef,
   onMaskUpdate,
 }) {
   const paintingRef = useRef(false)
   const rafRef = useRef(null)
   const dirtyRef = useRef(false)
+  const inFlightRef = useRef(false)
 
   // Convert screen coords to SAM_MASK_SIZE pixel coords using all four
   // projected chip corners. Uses inverse bilinear interpolation so that
@@ -84,27 +85,33 @@ export default function PaintbrushOverlay({
   }, [map, chipCorners])
 
   // Update the MapLibre image source with current composited mask
-  const updateOverlay = useCallback(() => {
+  const updateOverlay = useCallback(async () => {
     if (!map || !chipCorners) return
-    const composited = compositeMask(samMask)
-    const dataURL = maskToDataURL(composited)
+    if (inFlightRef.current) return
+    inFlightRef.current = true
+    try {
+      const composited = compositeMask(samMaskRef.current)
+      const dataURL = await maskToDataURL(composited)
 
-    const src = map.getSource(PAINT_SOURCE)
-    if (src) {
-      src.updateImage({ url: dataURL, coordinates: chipCorners })
-    } else {
-      map.addSource(PAINT_SOURCE, {
-        type: 'image',
-        url: dataURL,
-        coordinates: chipCorners,
-      })
-      map.addLayer({
-        id: PAINT_LAYER,
-        type: 'raster',
-        source: PAINT_SOURCE,
-      })
+      const src = map.getSource(PAINT_SOURCE)
+      if (src) {
+        src.updateImage({ url: dataURL, coordinates: chipCorners })
+      } else {
+        map.addSource(PAINT_SOURCE, {
+          type: 'image',
+          url: dataURL,
+          coordinates: chipCorners,
+        })
+        map.addLayer({
+          id: PAINT_LAYER,
+          type: 'raster',
+          source: PAINT_SOURCE,
+        })
+      }
+    } finally {
+      inFlightRef.current = false
     }
-  }, [map, chipCorners, compositeMask, samMask])
+  }, [map, chipCorners, compositeMask, samMaskRef])
 
   // Clean up the MapLibre source/layer when paint mode deactivates or chip changes
   useEffect(() => {
@@ -183,7 +190,7 @@ export default function PaintbrushOverlay({
       // Flush final render and notify parent
       updateOverlay()
       if (onMaskUpdate) {
-        onMaskUpdate(compositeMask(samMask))
+        onMaskUpdate(compositeMask(samMaskRef.current))
       }
     }
 
@@ -201,7 +208,7 @@ export default function PaintbrushOverlay({
         map.dragPan.enable()
       }
     }
-  }, [map, paintMode, chipCorners, brushSize, screenToCanvas, paintAt, updateOverlay, onMaskUpdate, compositeMask, samMask])
+  }, [map, paintMode, chipCorners, brushSize, screenToCanvas, paintAt, updateOverlay, onMaskUpdate, compositeMask, samMaskRef])
 
   // No DOM element needed — everything renders through MapLibre
   return null

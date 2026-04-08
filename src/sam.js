@@ -152,14 +152,20 @@ export function maskToPngBase64(mask, width = SAM_MASK_SIZE, height = SAM_MASK_S
 }
 
 /**
- * Convert a binary mask (512x512) to a data URL for use as a map image overlay.
+ * Convert a binary mask (512x512) to an object URL for use as a map image overlay.
  * Mask pixels are rendered as semi-transparent blue.
+ * Uses toBlob() (async) to avoid synchronous PNG encoding on the main thread.
  */
-export function maskToDataURL(mask, width = 512, height = 512) {
-  const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = height
-  const ctx = canvas.getContext('2d')
+let _overlayCanvas = null
+let _prevObjectURL = null
+
+export async function maskToDataURL(mask, width = 512, height = 512) {
+  if (!_overlayCanvas) {
+    _overlayCanvas = document.createElement('canvas')
+  }
+  _overlayCanvas.width = width
+  _overlayCanvas.height = height
+  const ctx = _overlayCanvas.getContext('2d')
   const imageData = ctx.createImageData(width, height)
 
   for (let i = 0; i < mask.length; i++) {
@@ -174,5 +180,9 @@ export function maskToDataURL(mask, width = 512, height = 512) {
   }
 
   ctx.putImageData(imageData, 0, 0)
-  return canvas.toDataURL()
+
+  const blob = await new Promise(resolve => _overlayCanvas.toBlob(resolve))
+  if (_prevObjectURL) URL.revokeObjectURL(_prevObjectURL)
+  _prevObjectURL = URL.createObjectURL(blob)
+  return _prevObjectURL
 }

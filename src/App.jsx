@@ -59,14 +59,14 @@ function AppInner() {
             brushSize={labeling.paintbrush.brushSize}
             paintAt={labeling.paintbrush.paintAt}
             compositeMask={labeling.paintbrush.compositeMask}
-            samMask={labeling.currentSamMask}
+            samMaskRef={labeling.currentSamMaskRef}
             onMaskUpdate={labeling.handleMaskUpdate}
           />
           <StatusBar
             selectedChipId={labeling.selectedChipId}
             clickPoints={labeling.clickPoints}
             maskIndex={labeling.maskIndex}
-            maskResults={labeling.maskResults}
+            maskInfo={labeling.maskInfo}
             paintMode={labeling.paintbrush.paintMode}
             brushSize={labeling.paintbrush.brushSize}
             deleteMode={labeling.deleteMode}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import maplibregl from 'maplibre-gl'
 import { initSamDecoder, isDecoderReady, runSamDecoder, maskToDataURL, maskToPngBase64 } from '../sam'
 import { loadNpy } from '../npy'
@@ -63,12 +63,15 @@ function getMapBbox(map) {
 export function useLabelingView({ active, map, featureById, layerProviders = [] }) {
   const [selectedChipId, setSelectedChipId] = useState(null)
   const [clickPoints, setClickPoints] = useState([])
-  const [maskResults, setMaskResults] = useState(null)
+  const [maskInfo, setMaskInfo] = useState(null) // { count, scores } — lightweight summary for UI
   const [maskIndex, setMaskIndex] = useState(-1)
   const [showLabels, setShowLabels] = useState(false)
   const [previewGeojson, setPreviewGeojson] = useState(null)
   const [deleteMode, setDeleteMode] = useState(false)
+  const [chipCorners, setChipCorners] = useState(null)
   const paintbrush = usePaintbrush()
+  const paintbrushRef = useRef(paintbrush)
+  useEffect(() => { paintbrushRef.current = paintbrush }, [paintbrush])
 
   // Mutable handler state (refs)
   const chipRef = useRef({ id: null, corners: null, embedding: null })
@@ -94,7 +97,6 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
   useEffect(() => { showLabelsRef.current = showLabels }, [showLabels])
   useEffect(() => { previewGeojsonRef.current = previewGeojson }, [previewGeojson])
   useEffect(() => { deleteModeRef.current = deleteMode }, [deleteMode])
-  useEffect(() => { maskResultsRef.current = maskResults }, [maskResults])
   useEffect(() => { maskIndexRef.current = maskIndex }, [maskIndex])
   useEffect(() => { paintModeRef.current = paintbrush.paintMode }, [paintbrush.paintMode])
 
@@ -197,12 +199,10 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
     }
 
     fetchLabels()
-    const pollInterval = setInterval(fetchLabels, 5000)
     map.on('moveend', onMoveEnd)
 
     return () => {
       cancelled = true
-      clearInterval(pollInterval)
       clearTimeout(debounceTimer)
       map.off('moveend', onMoveEnd)
       if (map.getLayer('labels-fill')) map.removeLayer('labels-fill')
@@ -269,7 +269,9 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
       clearPointMarkers()
       points.length = 0
       lastLowResMaskRef.current = null
-      setMaskResults(null)
+      maskResultsRef.current = null
+      currentSamMaskRef.current = null
+      setMaskInfo(null)
       setMaskIndex(-1)
       setClickPoints([])
       removePreviewLayer()
@@ -282,6 +284,7 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
       chip.corners = null
       chip.embedding = null
       setSelectedChipId(null)
+      setChipCorners(null)
       if (map.getLayer('chips-outline')) {
         map.setPaintProperty('chips-outline', 'line-color', [
           'match', ['get', 'split'],
@@ -309,20 +312,23 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
       markers.push(marker)
     }
 
-    function showMask(mask, imageCoords) {
-      const dataURL = maskToDataURL(mask)
-      if (map.getLayer('mask-overlay')) map.removeLayer('mask-overlay')
-      if (map.getSource('mask-overlay')) map.removeSource('mask-overlay')
-      map.addSource('mask-overlay', {
-        type: 'image',
-        url: dataURL,
-        coordinates: imageCoords,
-      })
-      map.addLayer({
-        id: 'mask-overlay',
-        type: 'raster',
-        source: 'mask-overlay',
-      })
+    async function showMask(mask, imageCoords) {
+      const dataURL = await maskToDataURL(mask)
+      const src = map.getSource('mask-overlay')
+      if (src) {
+        src.updateImage({ url: dataURL, coordinates: imageCoords })
+      } else {
+        map.addSource('mask-overlay', {
+          type: 'image',
+          url: dataURL,
+          coordinates: imageCoords,
+        })
+        map.addLayer({
+          id: 'mask-overlay',
+          type: 'raster',
+          source: 'mask-overlay',
+        })
+      }
       raiseLabels(map)
     }
 
@@ -349,7 +355,9 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
 
       const maskPrior = getMaskPrior()
       const { masks, scores, lowResMasks } = await runSamDecoder(chip.embedding, points, maskPrior)
-      setMaskResults({ masks, scores, lowResMasks, imageCoords: chip.corners })
+      maskResultsRef.current = { masks, scores, lowResMasks, imageCoords: chip.corners }
+      currentSamMaskRef.current = masks[0]
+      setMaskInfo({ count: masks.length, scores })
       setMaskIndex(0)
       showMask(masks[0], chip.corners)
 
@@ -395,6 +403,7 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
       chip.id = chipId
       chip.corners = imageCoords
       setSelectedChipId(chipId)
+      setChipCorners(imageCoords)
 
       const lngs = imageCoords.map(c => c[0])
       const lats = imageCoords.map(c => c[1])
@@ -438,7 +447,9 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
         if (map.getLayer('mask-overlay')) map.removeLayer('mask-overlay')
         if (map.getSource('mask-overlay')) map.removeSource('mask-overlay')
         lastLowResMaskRef.current = null
-        setMaskResults(null)
+        maskResultsRef.current = null
+        currentSamMaskRef.current = null
+        setMaskInfo(null)
         setMaskIndex(-1)
         return
       }
@@ -446,7 +457,9 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
 
       const maskPrior = getMaskPrior()
       const { masks, scores, lowResMasks } = await runSamDecoder(chip.embedding, points, maskPrior)
-      setMaskResults({ masks, scores, lowResMasks, imageCoords: chip.corners })
+      maskResultsRef.current = { masks, scores, lowResMasks, imageCoords: chip.corners }
+      currentSamMaskRef.current = masks[0]
+      setMaskInfo({ count: masks.length, scores })
       setMaskIndex(0)
       showMask(masks[0], chip.corners)
       if (lowResMasks && lowResMasks.length > 0) {
@@ -592,7 +605,7 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
             if (res.ok) {
               console.log('Label saved:', res.label_id)
               clearSegmentation()
-              paintbrush.clearCorrections()
+              paintbrushRef.current.clearCorrections()
               if (showLabelsRef.current && map.getSource('labels')) {
                 fetch(data.labelsUrl(getMapBbox(map))).then(r => r.json()).then(geojson => {
                   if (map.getSource('labels')) map.getSource('labels').setData(geojson)
@@ -610,7 +623,7 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
         if (!r || r.masks.length === 0) return
         const idx = maskIndexRef.current >= 0 ? maskIndexRef.current : 0
         const samMask = r.masks[idx]
-        const finalMask = paintbrush.compositeMask(samMask)
+        const finalMask = paintbrushRef.current.compositeMask(samMask)
         const base64 = maskToPngBase64(finalMask)
         pendingMaskRef.current = base64
         data.vectorizePreview(chip.id, base64, 'positive').then((feature) => {
@@ -630,7 +643,7 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
       if (e.key === 'Escape') {
         e.preventDefault()
         if (paintModeRef.current) {
-          paintbrush.setPaintMode(null)
+          paintbrushRef.current.setPaintMode(null)
           return
         }
         deselectChip()
@@ -644,7 +657,7 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
           map.dragPan.enable()
         } else {
           setDeleteMode(true)
-          paintbrush.setPaintMode(null)
+          paintbrushRef.current.setPaintMode(null)
           setShowLabels(true)
         }
         return
@@ -655,25 +668,25 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
       // Paintbrush shortcuts
       if (e.key === 'b' || e.key === 'B') {
         if (!chip.id) return
-        paintbrush.setPaintMode((prev) => prev ? null : 'add')
+        paintbrushRef.current.setPaintMode((prev) => prev ? null : 'add')
         return
       }
       if (e.key === 'a' || e.key === 'A') {
         if (!chip.id) return
-        paintbrush.setPaintMode('add')
+        paintbrushRef.current.setPaintMode('add')
         return
       }
       if (e.key === 'e' || e.key === 'E') {
         if (!chip.id) return
-        paintbrush.setPaintMode('erase')
+        paintbrushRef.current.setPaintMode('erase')
         return
       }
       if (e.key === '=' || e.key === '+') {
-        paintbrush.adjustBrushSize(2)
+        paintbrushRef.current.adjustBrushSize(2)
         return
       }
       if (e.key === '-' || e.key === '_') {
-        paintbrush.adjustBrushSize(-2)
+        paintbrushRef.current.adjustBrushSize(-2)
         return
       }
 
@@ -691,11 +704,12 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
         const idx = e.key === ']'
           ? (prev + 1) % r.masks.length
           : (prev - 1 + r.masks.length) % r.masks.length
+        currentSamMaskRef.current = r.masks[idx]
         showMask(r.masks[idx], r.imageCoords)
         if (r.lowResMasks && r.lowResMasks[idx]) {
           lastLowResMaskRef.current = new Float32Array(r.lowResMasks[idx])
         }
-        paintbrush.clearCorrections()
+        paintbrushRef.current.clearCorrections()
         return idx
       })
     }
@@ -730,48 +744,52 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
       map.off('mousemove', onDeleteMouseMove)
       map.off('mouseup', onDeleteMouseUp)
     }
-  }, [map, active, featureById, paintbrush])
+  // paintbrush methods are accessed via paintbrushRef to avoid tearing down
+  // all map handlers on every paintbrush state change.
+  }, [map, active, featureById])
 
   // Update the map mask overlay when paintbrush modifies the composited mask
-  const handleMaskUpdate = useCallback((composited) => {
+  const handleMaskUpdate = useCallback(async (composited) => {
     if (!map || !chipRef.current.corners) return
-    const dataURL = maskToDataURL(composited)
-    if (map.getLayer('mask-overlay')) map.removeLayer('mask-overlay')
-    if (map.getSource('mask-overlay')) map.removeSource('mask-overlay')
-    map.addSource('mask-overlay', {
-      type: 'image',
-      url: dataURL,
-      coordinates: chipRef.current.corners,
-    })
-    map.addLayer({
-      id: 'mask-overlay',
-      type: 'raster',
-      source: 'mask-overlay',
-    })
+    const dataURL = await maskToDataURL(composited)
+    const src = map.getSource('mask-overlay')
+    if (src) {
+      src.updateImage({ url: dataURL, coordinates: chipRef.current.corners })
+    } else {
+      map.addSource('mask-overlay', {
+        type: 'image',
+        url: dataURL,
+        coordinates: chipRef.current.corners,
+      })
+      map.addLayer({
+        id: 'mask-overlay',
+        type: 'raster',
+        source: 'mask-overlay',
+      })
+    }
     raiseLabels(map)
   }, [map])
 
   // Collect controls from all layer providers
-  const labelsControl = {
-    label: 'Labels',
-    active: showLabels,
-    onToggle: () => setShowLabels(prev => !prev),
-  }
-  const pluginControls = [labelsControl, ...layerProviders.flatMap(lp => lp.controls || [])]
+  const toggleLabels = useCallback(() => setShowLabels(prev => !prev), [])
+  const pluginControls = useMemo(() => [
+    { label: 'Labels', active: showLabels, onToggle: toggleLabels },
+    ...layerProviders.flatMap(lp => lp.controls || []),
+  ], [showLabels, toggleLabels, layerProviders])
 
-  // Get the current SAM mask for compositing
-  const currentSamMask = maskResults && maskIndex >= 0 ? maskResults.masks[maskIndex] : null
-  const chipCorners = chipRef.current.corners
+  // Current SAM mask for compositing — kept in a ref so large binary data
+  // never enters React state. Updated by effects/handlers that change masks.
+  const currentSamMaskRef = useRef(null)
 
   return {
     selectedChipId,
     clickPoints,
-    maskResults,
+    maskInfo,
     maskIndex,
     pluginControls,
     paintbrush,
     chipCorners,
-    currentSamMask,
+    currentSamMaskRef,
     handleMaskUpdate,
     previewGeojson,
     deleteMode,

@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback } from 'react'
+import { useRef, useState, useCallback, useMemo } from 'react'
 import { SAM_MASK_SIZE } from '../sam'
 
 const PIXELS = SAM_MASK_SIZE * SAM_MASK_SIZE
@@ -12,6 +12,8 @@ export function usePaintbrush() {
   const [paintMode, setPaintMode] = useState(null) // null | 'add' | 'erase'
   const [brushSize, setBrushSize] = useState(DEFAULT_BRUSH_SIZE)
   const correctionsRef = useRef(new Uint8Array(PIXELS))
+  // Pre-allocated buffer for compositeMask — callers must read immediately, not cache across frames
+  const compositeRef = useRef(new Float32Array(PIXELS))
 
   const paintAt = useCallback((x, y) => {
     const buf = correctionsRef.current
@@ -35,7 +37,7 @@ export function usePaintbrush() {
 
   const compositeMask = useCallback((samMask) => {
     const buf = correctionsRef.current
-    const out = new Float32Array(PIXELS)
+    const out = compositeRef.current
     for (let i = 0; i < PIXELS; i++) {
       const sam = samMask ? samMask[i] : 0
       const corr = buf[i]
@@ -58,7 +60,7 @@ export function usePaintbrush() {
     setBrushSize((prev) => Math.max(MIN_BRUSH, Math.min(MAX_BRUSH, prev + delta)))
   }, [])
 
-  return {
+  return useMemo(() => ({
     paintMode,
     setPaintMode,
     brushSize,
@@ -68,5 +70,5 @@ export function usePaintbrush() {
     paintAt,
     compositeMask,
     clearCorrections,
-  }
+  }), [paintMode, brushSize, paintAt, compositeMask, clearCorrections, adjustBrushSize])
 }

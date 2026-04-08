@@ -32,6 +32,7 @@ function InfoPanel() {
           <li>Use <kbd>[</kbd> and <kbd>]</kbd> to select the best mask.</li>
           <li>Prompt with more points iteratively.</li>
           <li><kbd>b</kbd> triggers painting mode to manually correct SAM predictions as a final step.</li>
+          <li><kbd>Enter</kbd> previews a vectorized SAM mask that is sent to the label database in the full version.</li>
         </ul>
       </div>
     </div>
