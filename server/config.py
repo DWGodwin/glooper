@@ -18,7 +18,25 @@ DEFAULTS = {
     "worker_host": "localhost",
     "worker_port": 9100,
     "plugins": [],
+    "vectorization": {
+        "strategy": "simplify",
+        "tolerance_px": 0.5,
+        "min_area_px": 4,
+        "max_vertices": None,
+        "class_overrides": {},
+    },
 }
+
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Recursively merge override into base, returning a new dict."""
+    result = dict(base)
+    for key, val in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(val, dict):
+            result[key] = _deep_merge(result[key], val)
+        else:
+            result[key] = val
+    return result
 
 
 def get_config():
@@ -29,7 +47,7 @@ def get_config():
     config_path = Path(os.environ.get("GLOOPER_CONFIG", "config.yaml")).resolve()
     if config_path.exists():
         with open(config_path) as f:
-            _config = {**DEFAULTS, **yaml.safe_load(f)}
+            _config = _deep_merge(DEFAULTS, yaml.safe_load(f) or {})
     else:
         _config = dict(DEFAULTS)
 
@@ -59,6 +77,16 @@ def get_plugin_config(name: str) -> dict:
         if p["name"] == name:
             return p
     return {}
+
+
+def get_vectorization_config(label_class: str | None = None) -> dict:
+    """Return vectorization config, with class overrides merged if specified."""
+    cfg = get_config()
+    base = dict(cfg["vectorization"])
+    overrides = base.pop("class_overrides", {})
+    if label_class and label_class in overrides:
+        base.update(overrides[label_class])
+    return base
 
 
 def validate_plugin_deps():

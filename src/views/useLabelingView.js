@@ -56,6 +56,7 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
   const [maskResults, setMaskResults] = useState(null)
   const [maskIndex, setMaskIndex] = useState(-1)
   const [showLabels, setShowLabels] = useState(false)
+  const [previewGeojson, setPreviewGeojson] = useState(null)
   const paintbrush = usePaintbrush()
 
   // Mutable handler state (refs)
@@ -71,9 +72,12 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
   const paintModeRef = useRef(null)
   const layerProvidersRef = useRef(layerProviders)
   const showLabelsRef = useRef(false)
+  const previewGeojsonRef = useRef(null)
+  const pendingMaskRef = useRef(null)
 
   useEffect(() => { layerProvidersRef.current = layerProviders }, [layerProviders])
   useEffect(() => { showLabelsRef.current = showLabels }, [showLabels])
+  useEffect(() => { previewGeojsonRef.current = previewGeojson }, [previewGeojson])
   useEffect(() => { maskResultsRef.current = maskResults }, [maskResults])
   useEffect(() => { maskIndexRef.current = maskIndex }, [maskIndex])
   useEffect(() => { paintModeRef.current = paintbrush.paintMode }, [paintbrush.paintMode])
@@ -140,6 +144,34 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
     const points = pointsRef.current
     const markers = pointMarkersRef.current
 
+    function showPreviewLayer(geojson) {
+      if (map.getLayer('preview-fill')) map.removeLayer('preview-fill')
+      if (map.getLayer('preview-outline')) map.removeLayer('preview-outline')
+      if (map.getSource('preview')) map.removeSource('preview')
+      map.addSource('preview', { type: 'geojson', data: geojson })
+      map.addLayer({
+        id: 'preview-fill',
+        type: 'fill',
+        source: 'preview',
+        paint: { 'fill-color': '#22c55e', 'fill-opacity': 0.4 },
+      })
+      map.addLayer({
+        id: 'preview-outline',
+        type: 'line',
+        source: 'preview',
+        paint: { 'line-color': '#16a34a', 'line-width': 2 },
+      })
+    }
+
+    function removePreviewLayer() {
+      if (map.getLayer('preview-fill')) map.removeLayer('preview-fill')
+      if (map.getLayer('preview-outline')) map.removeLayer('preview-outline')
+      if (map.getSource('preview')) map.removeSource('preview')
+      previewGeojsonRef.current = null
+      pendingMaskRef.current = null
+      setPreviewGeojson(null)
+    }
+
     function removeOverlays() {
       for (const id of ['mask-overlay', 'chip-overlay']) {
         if (map.getLayer(id)) map.removeLayer(id)
@@ -165,6 +197,7 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
       setMaskResults(null)
       setMaskIndex(-1)
       setClickPoints([])
+      removePreviewLayer()
     }
 
     function deselectChip() {
@@ -386,6 +419,10 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
       if (e.key === 'Backspace') {
         e.preventDefault()
         if (paintModeRef.current) return
+        if (previewGeojsonRef.current) {
+          removePreviewLayer()
+          return
+        }
         if (points.length > 0) {
           clearSegmentation()
         } else {
@@ -396,26 +433,45 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
       if (e.key === 'Enter') {
         e.preventDefault()
         if (!chip.id) return
+
+        // Step 2: preview is showing — persist the label
+        if (previewGeojsonRef.current && pendingMaskRef.current) {
+          const pendingBase64 = pendingMaskRef.current
+          data.saveChipLabel(chip.id, pendingBase64, 'positive').then((res) => {
+            if (res.ok) {
+              console.log('Label saved:', res.label_id)
+              clearSegmentation()
+              paintbrush.clearCorrections()
+              if (showLabelsRef.current && map.getSource('labels')) {
+                fetch(data.labelsUrl()).then(r => r.json()).then(geojson => {
+                  if (map.getSource('labels')) map.getSource('labels').setData(geojson)
+                })
+              }
+            } else {
+              console.error('Failed to save label:', res.detail || res)
+            }
+          })
+          return
+        }
+
+        // Step 1: generate preview
         const r = maskResultsRef.current
         if (!r || r.masks.length === 0) return
-        // Composite the current SAM mask with any paintbrush corrections
         const idx = maskIndexRef.current >= 0 ? maskIndexRef.current : 0
         const samMask = r.masks[idx]
         const finalMask = paintbrush.compositeMask(samMask)
         const base64 = maskToPngBase64(finalMask)
-        data.saveChipLabel(chip.id, base64, 'positive').then((res) => {
-          if (res.ok) {
-            console.log('Label saved:', res.label_id)
-            clearSegmentation()
-            paintbrush.clearCorrections()
-            // Refresh labels layer if visible
-            if (showLabelsRef.current && map.getSource('labels')) {
-              fetch(data.labelsUrl()).then(r => r.json()).then(geojson => {
-                if (map.getSource('labels')) map.getSource('labels').setData(geojson)
-              })
-            }
+        pendingMaskRef.current = base64
+        data.vectorizePreview(chip.id, base64, 'positive').then((feature) => {
+          if (feature.geometry) {
+            const geojson = { type: 'FeatureCollection', features: [feature] }
+            previewGeojsonRef.current = geojson
+            setPreviewGeojson(geojson)
+            showPreviewLayer(geojson)
+            console.log(`Preview: ${feature.properties.vertex_count} vertices — Enter to save, Backspace to dismiss`)
           } else {
-            console.error('Failed to save label:', res.detail || res)
+            console.error('Preview failed:', feature.detail || feature)
+            pendingMaskRef.current = null
           }
         })
         return
@@ -544,5 +600,6 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
     chipCorners,
     currentSamMask,
     handleMaskUpdate,
+    previewGeojson,
   }
 }

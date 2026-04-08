@@ -25,4 +25,12 @@ export const data = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mask: maskPngBase64, label_class: labelClass }),
     }).then(r => r.json()),
+  vectorizePreview: (chipId, maskPngBase64, labelClass = 'positive', vectorization = null) =>
+    fetch(`${API}/api/chips/${chipId}/vectorize-preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mask: maskPngBase64, label_class: labelClass, ...(vectorization && { vectorization }) }),
+    }).then(r => r.json()),
+  getVectorizationConfig: (labelClass = null) =>
+    fetch(`${API}/api/config/vectorization${labelClass ? `/${labelClass}` : ''}`).then(r => r.json()),
 }

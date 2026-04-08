@@ -7,13 +7,11 @@ from pathlib import Path
 
 import duckdb
 import numpy as np
-import rasterio.features
 from PIL import Image
 from rasterio.transform import from_bounds
-from shapely.geometry import shape
-from shapely.ops import unary_union
 
-from server.config import get_config
+from server.config import get_config, get_vectorization_config
+from server.vectorize import vectorize_mask
 
 _conn = None
 _write_lock = threading.Lock()
@@ -152,19 +150,16 @@ def delete_labels(ids: list[str]) -> int:
         return result.fetchone()[0] if result.description else len(ids)
 
 
-def save_chip_label(chip_id: str, mask_png_bytes: bytes, label_class: str = "positive"):
-    """Vectorize a binary mask PNG and save as a polygon label in DuckDB.
+def parse_mask_for_chip(chip_id: str, mask_png_bytes: bytes):
+    """Parse a binary mask PNG and georeference it using the chip's geometry.
 
-    The mask is georeferenced using the chip's projected geometry from DuckDB.
-    Returns the label ID on success.
+    Returns (mask_array, transform) where mask_array is binary uint8 and
+    transform is a rasterio Affine mapping pixels to projected CRS.
     """
     chip = get_chip_by_id(chip_id)
     if chip is None:
         raise ValueError(f"Chip {chip_id} not found")
 
-    # Parse chip WKT to extract bounding box
-    # WKT vertex order from grid.py: NE, SE, SW, NW, NE (closing)
-    # Format: POLYGON((e2 n2, e2 n, e n, e n2, e2 n2))
     wkt = chip["geometry_wkt"]
     coord_text = re.search(r"\(\((.+)\)\)", wkt).group(1)
     vertices = [tuple(map(float, p.strip().split())) for p in coord_text.split(",")]
@@ -173,32 +168,27 @@ def save_chip_label(chip_id: str, mask_png_bytes: bytes, label_class: str = "pos
     min_e, max_e = min(eastings), max(eastings)
     min_n, max_n = min(northings), max(northings)
 
-    # Read mask PNG into a numpy array
     img = Image.open(io.BytesIO(mask_png_bytes)).convert("L")
     mask_array = np.array(img)
-    # Threshold to binary (any non-zero pixel = 1)
     mask_array = (mask_array > 127).astype(np.uint8)
 
     height, width = mask_array.shape
 
-    # Reject empty masks
     if mask_array.sum() == 0:
         raise ValueError("Mask is empty — nothing to save")
 
-    # Build affine: pixel (0,0) = top-left = (min_e, max_n)
     transform = from_bounds(min_e, min_n, max_e, max_n, width, height)
+    return mask_array, transform
 
-    # Vectorize mask to polygons in projected CRS
-    polygons = []
-    for geom, value in rasterio.features.shapes(mask_array, transform=transform):
-        if value == 1:
-            polygons.append(shape(geom))
 
-    if not polygons:
-        raise ValueError("Mask vectorization produced no polygons")
+def save_chip_label(chip_id: str, mask_png_bytes: bytes, label_class: str = "positive"):
+    """Vectorize a binary mask PNG and save as a polygon label in DuckDB.
 
-    merged = unary_union(polygons)
-    simplified = merged.simplify(transform.a * 0.5, preserve_topology=True)
+    Returns the label ID on success.
+    """
+    mask_array, transform = parse_mask_for_chip(chip_id, mask_png_bytes)
+    config = get_vectorization_config(label_class)
+    geometry = vectorize_mask(mask_array, transform, config)
 
     label_id = str(uuid.uuid4())
     conn = get_db()
@@ -206,7 +196,7 @@ def save_chip_label(chip_id: str, mask_png_bytes: bytes, label_class: str = "pos
         conn.execute(
             "INSERT INTO labels (id, class, geometry) "
             "VALUES (?, ?, ST_GeomFromText(?))",
-            [label_id, label_class, simplified.wkt],
+            [label_id, label_class, geometry.wkt],
         )
 
     return label_id
