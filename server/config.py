@@ -26,12 +26,19 @@ def get_config():
     if _config is not None:
         return _config
 
-    config_path = Path(os.environ.get("GLOOPER_CONFIG", "config.yaml"))
+    config_path = Path(os.environ.get("GLOOPER_CONFIG", "config.yaml")).resolve()
     if config_path.exists():
         with open(config_path) as f:
             _config = {**DEFAULTS, **yaml.safe_load(f)}
     else:
         _config = dict(DEFAULTS)
+
+    # Resolve paths relative to config file's parent directory
+    config_dir = config_path.parent if config_path.exists() else Path.cwd()
+    for key in ("data_dir", "db_path"):
+        p = Path(_config[key])
+        if not p.is_absolute():
+            _config[key] = str(config_dir / p)
 
     # Normalize plugins: bare strings → {"name": str}
     raw = _config.get("plugins", [])
