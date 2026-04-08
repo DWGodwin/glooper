@@ -1,4 +1,4 @@
-function DefineArea({ drawMode, onToggleDraw, activeSplit, onSplitChange, prefetchJob }) {
+function DefineArea({ drawMode, onToggleDraw, deleteMode, onToggleDelete, activeSplit, onSplitChange, prefetchJob }) {
   const splits = ['train', 'test', 'validate']
 
   return (
@@ -19,6 +19,13 @@ function DefineArea({ drawMode, onToggleDraw, activeSplit, onSplitChange, prefet
         onClick={onToggleDraw}
       >
         {drawMode ? 'Cancel Drawing' : 'Draw Rectangle'}
+      </button>
+      <button
+        className={`draw-toggle ${deleteMode ? 'active' : ''}`}
+        style={deleteMode ? { background: '#ef4444', borderColor: '#ef4444' } : {}}
+        onClick={onToggleDelete}
+      >
+        {deleteMode ? 'Cancel Delete' : 'Delete Area'}
       </button>
       {prefetchJob && prefetchJob.phase !== 'complete' && (
         <div className="prefetch-status">

@@ -42,6 +42,8 @@ function AppInner() {
         <DefineArea
           drawMode={defineArea.drawMode}
           onToggleDraw={defineArea.toggleDraw}
+          deleteMode={defineArea.deleteMode}
+          onToggleDelete={defineArea.toggleDelete}
           activeSplit={defineArea.activeSplit}
           onSplitChange={defineArea.setActiveSplit}
           prefetchJob={defineArea.prefetchJob}
@@ -67,6 +69,7 @@ function AppInner() {
             maskResults={labeling.maskResults}
             paintMode={labeling.paintbrush.paintMode}
             brushSize={labeling.paintbrush.brushSize}
+            deleteMode={labeling.deleteMode}
           />
           <BasemapPicker
             activeBasemap={activeBasemap}

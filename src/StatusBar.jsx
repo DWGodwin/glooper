@@ -1,8 +1,19 @@
-function StatusBar({ selectedChipId, clickPoints, maskIndex, maskResults, paintMode, brushSize }) {
+function StatusBar({ selectedChipId, clickPoints, maskIndex, maskResults, paintMode, brushSize, deleteMode }) {
+  if (deleteMode) {
+    return (
+      <div className="status-bar status-bar-active" style={{ borderColor: '#ef4444' }}>
+        <span className="status-bar-mask" style={{ color: '#ef4444' }}>DELETE MODE</span>
+        <span className="status-bar-hints">
+          click to delete &middot; drag box to delete region &middot; d exit
+        </span>
+      </div>
+    )
+  }
+
   if (!selectedChipId) {
     return (
       <div className="status-bar">
-        <span className="status-bar-text">Click a chip to select it</span>
+        <span className="status-bar-text">Click a chip to select it &middot; d delete mode</span>
       </div>
     )
   }

@@ -1,12 +1,12 @@
 import base64
 import json
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional
 
 from server.config import get_config, get_vectorization_config
-from server.db import insert_labels, get_all_labels, delete_labels, get_chip_by_id, save_chip_label, parse_mask_for_chip
+from server.db import insert_labels, get_all_labels, get_labels_by_bbox, delete_labels, delete_labels_by_geometry, get_chip_by_id, save_chip_label, parse_mask_for_chip
 from server.vectorize import vectorize_mask
 
 router = APIRouter(prefix="/api")
@@ -29,8 +29,18 @@ def create_labels(req: LabelUpload):
 
 
 @router.get("/labels")
-def list_labels():
-    labels = get_all_labels()
+def list_labels(bbox: Optional[str] = Query(None)):
+    if bbox:
+        parts = bbox.split(",")
+        if len(parts) != 4:
+            raise HTTPException(status_code=400, detail="bbox must be 4 comma-separated floats: west,south,east,north")
+        try:
+            coords = tuple(float(p) for p in parts)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="bbox values must be numeric")
+        labels = get_labels_by_bbox(coords)
+    else:
+        labels = get_all_labels()
     features = []
     for lab in labels:
         features.append({
@@ -44,6 +54,43 @@ def list_labels():
 @router.delete("/labels")
 def remove_labels(req: DeleteLabelsRequest):
     count = delete_labels(req.ids)
+    return {"deleted": count}
+
+
+class SpatialDeleteRequest(BaseModel):
+    point: Optional[list[float]] = None  # [lon, lat]
+    bbox: Optional[list[float]] = None   # [west, south, east, north]
+
+
+@router.delete("/labels/by-geometry")
+def delete_labels_spatial(req: SpatialDeleteRequest):
+    if not req.point and not req.bbox:
+        raise HTTPException(status_code=400, detail="Provide 'point' or 'bbox'")
+
+    from pyproj import Transformer
+
+    cfg = get_config()
+    project_crs = cfg["crs"]
+    transformer = Transformer.from_crs("EPSG:4326", project_crs, always_xy=True)
+
+    if req.point:
+        lon, lat = req.point
+        x, y = transformer.transform(lon, lat)
+        buf = 1.5  # ~1.5m buffer in projected CRS
+        wkt = (
+            f"POLYGON(({x - buf} {y - buf}, {x + buf} {y - buf}, "
+            f"{x + buf} {y + buf}, {x - buf} {y + buf}, {x - buf} {y - buf}))"
+        )
+    else:
+        west, south, east, north = req.bbox
+        min_x, min_y = transformer.transform(west, south)
+        max_x, max_y = transformer.transform(east, north)
+        wkt = (
+            f"POLYGON(({min_x} {min_y}, {max_x} {min_y}, "
+            f"{max_x} {max_y}, {min_x} {max_y}, {min_x} {min_y}))"
+        )
+
+    count = delete_labels_by_geometry(wkt)
     return {"deleted": count}
 
 

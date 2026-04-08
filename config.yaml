@@ -24,7 +24,7 @@ chip_size_px: 448
 # Vectorization: how binary masks become vector polygons
 vectorization:
   strategy: simplify        # simplify | convex_hull
-  tolerance_px: 2        # Douglas-Peucker tolerance in pixels (simplify only)
+  tolerance_px: 1.5       # Douglas-Peucker tolerance in pixels (simplify only)
   min_area_px: 4            # drop components smaller than N pixels
 #   max_vertices: null         # iteratively simplify until under this vertex count
 #   class_overrides:           # per-class overrides (merged on top of base)
