@@ -60,7 +60,7 @@ function getMapBbox(map) {
   return `${bounds.getWest()},${bounds.getSouth()},${bounds.getEast()},${bounds.getNorth()}`
 }
 
-export function useLabelingView({ active, map, featureById, layerProviders = [] }) {
+export function useLabelingView({ active, map, featureById, refreshChips, layerProviders = [] }) {
   const [selectedChipId, setSelectedChipId] = useState(null)
   const [clickPoints, setClickPoints] = useState([])
   const [maskInfo, setMaskInfo] = useState(null) // { count, scores } — lightweight summary for UI
@@ -85,6 +85,7 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
   const samInitRef = useRef(false)
   const paintModeRef = useRef(null)
   const layerProvidersRef = useRef(layerProviders)
+  const refreshChipsRef = useRef(refreshChips)
   const showLabelsRef = useRef(false)
   const previewGeojsonRef = useRef(null)
   const pendingMaskRef = useRef(null)
@@ -94,6 +95,7 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
   const deleteRectInitRef = useRef(false)
 
   useEffect(() => { layerProvidersRef.current = layerProviders }, [layerProviders])
+  useEffect(() => { refreshChipsRef.current = refreshChips }, [refreshChips])
   useEffect(() => { showLabelsRef.current = showLabels }, [showLabels])
   useEffect(() => { previewGeojsonRef.current = previewGeojson }, [previewGeojson])
   useEffect(() => { deleteModeRef.current = deleteMode }, [deleteMode])
@@ -579,7 +581,72 @@ export function useLabelingView({ active, map, featureById, layerProviders = [] 
       handleSegClick(coord.lng, coord.lat, 0)
     }
 
+    function parseChipId(id) {
+      const m = id.match(/^(-?\d+(?:\.\d+)?)e_(-?\d+(?:\.\d+)?)n$/)
+      return m ? [parseFloat(m[1]), parseFloat(m[2])] : null
+    }
+
+    function findNextIncompleteChip(fromChipId) {
+      const current = featureById.current[fromChipId]
+      if (!current) return null
+      const targetSplit = current.properties.split
+
+      const sorted = []
+      for (const f of Object.values(featureById.current)) {
+        if (f.properties.split !== targetSplit) continue
+        const coords = parseChipId(f.properties.id)
+        if (!coords) continue
+        sorted.push({ feature: f, easting: coords[0], northing: coords[1] })
+      }
+      sorted.sort((a, b) =>
+        a.northing !== b.northing ? a.northing - b.northing : a.easting - b.easting
+      )
+
+      const currentIdx = sorted.findIndex(c => c.feature.properties.id === fromChipId)
+      if (currentIdx === -1) return null
+
+      for (let step = 1; step < sorted.length; step++) {
+        const idx = (currentIdx + step) % sorted.length
+        if (sorted[idx].feature.properties.complete === true) continue
+        return sorted[idx].feature
+      }
+      return null
+    }
+
+    async function completeChipAndAdvance() {
+      if (!chip.id) return
+      const completedId = chip.id
+      removePreviewLayer()
+
+      let res
+      try {
+        res = await data.markChipComplete(completedId, true)
+      } catch (err) {
+        console.error('Failed to mark chip complete:', err)
+        return
+      }
+      if (!res || !res.ok) {
+        console.error('Failed to mark chip complete:', res && res.detail ? res.detail : res)
+        return
+      }
+
+      if (refreshChipsRef.current) await refreshChipsRef.current()
+
+      const next = findNextIncompleteChip(completedId)
+      if (next) {
+        selectChip(next.properties.id)
+      } else {
+        deselectChip()
+      }
+    }
+
     function handleKeyDown(e) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault()
+        if (!chip.id) return
+        completeChipAndAdvance()
+        return
+      }
       if (e.key === 'Backspace') {
         e.preventDefault()
         if (paintModeRef.current) return

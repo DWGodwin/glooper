@@ -40,7 +40,7 @@ function StatusBar({ selectedChipId, clickPoints, maskIndex, maskInfo, paintMode
           {' '}&middot; {clickPoints.length} point{clickPoints.length !== 1 ? 's' : ''}
         </span>
         <span className="status-bar-hints">
-          b paint &middot; [ ] cycle masks &middot; right-click exclude &middot; z undo &middot; ⌫ clear
+          b paint &middot; [ ] cycle masks &middot; right-click exclude &middot; z undo &middot; ⌫ clear &middot; ⌘↵ chip complete
         </span>
       </div>
     )
@@ -50,7 +50,7 @@ function StatusBar({ selectedChipId, clickPoints, maskIndex, maskInfo, paintMode
     return (
       <div className="status-bar">
         <span className="status-bar-text">
-          Click to add a point &middot; right-click to exclude &middot; b paint &middot; ⌫ deselect
+          Click to add a point &middot; right-click to exclude &middot; b paint &middot; ⌘↵ chip complete &middot; ⌫ deselect
         </span>
       </div>
     )
