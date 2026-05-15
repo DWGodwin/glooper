@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import './App.css'
 import StatusBar from './StatusBar'
 import BasemapPicker from './BasemapPicker'
@@ -6,8 +6,10 @@ import ViewNav from './ViewNav'
 import InfoPanel from './InfoPanel'
 import DefineArea from './DefineArea'
 import PaintbrushOverlay from './PaintbrushOverlay'
+import TrainingPanel from './TrainingPanel'
 import { MapProvider, useMap } from './MapContext'
 import { useChipGrid } from './hooks/useChipGrid'
+import { useTrainingRun } from './hooks/useTrainingRun'
 import { useDefineAreaView } from './views/useDefineAreaView'
 import { useLabelingView } from './views/useLabelingView'
 import { usePluginLabelingLayers, getPluginViews } from './plugins'
@@ -20,12 +22,29 @@ function AppInner() {
   const chipGrid = useChipGrid(map)
   const defineArea = useDefineAreaView({ active: activeView === 'define-area', map, chipGrid })
   const pluginLayers = usePluginLabelingLayers()
+  const training = useTrainingRun()
+  const [showPredictions, setShowPredictions] = useState(false)
+  const [showDiff, setShowDiff] = useState(false)
+  const togglePredictions = useCallback(() => setShowPredictions((v) => !v), [])
+  const toggleDiff = useCallback(() => setShowDiff((v) => !v), [])
+
+  // Auto-show predictions the first time a run completes.
+  useEffect(() => {
+    training.onComplete(() => setShowPredictions(true))
+  }, [training])
+
   const labeling = useLabelingView({
     active: activeView === 'labeling',
     map,
     featureById: chipGrid.featureById,
     refreshChips: chipGrid.refreshChips,
     layerProviders: pluginLayers,
+    currentRunId: training.currentRunId,
+    prevRunId: training.prevRunId,
+    showPredictions,
+    showDiff,
+    onTogglePredictions: togglePredictions,
+    onToggleDiff: toggleDiff,
   })
   const pluginViews = getPluginViews()
 
@@ -77,6 +96,7 @@ function AppInner() {
             onBasemapChange={switchBasemap}
             pluginControls={labeling.pluginControls}
           />
+          {!IS_DEMO && <TrainingPanel training={training} />}
         </div>
       }
       {pluginViews.map((pv) => activeView === pv.id && pv.Component && (

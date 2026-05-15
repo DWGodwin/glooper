@@ -25,6 +25,17 @@ DEFAULTS = {
         "max_vertices": None,
         "class_overrides": {},
     },
+    "training": {
+        "model_size": "small",
+        "epochs": 20,
+        "batch_size": 4,
+        "learning_rate": 0.001,
+        "pos_weight": "auto",
+        "augmentations": ["hflip", "vflip", "rot90"],
+        "worker_host": "localhost",
+        "worker_port": 9101,
+        "models_dir": "data/training_runs",
+    },
 }
 
 
@@ -87,6 +98,16 @@ def get_vectorization_config(label_class: str | None = None) -> dict:
     if label_class and label_class in overrides:
         base.update(overrides[label_class])
     return base
+
+
+def get_training_config() -> dict:
+    """Return the training-section config (model, loop, worker)."""
+    return dict(get_config()["training"])
+
+
+def merge_hyperparams(request_overrides: dict | None) -> dict:
+    """Merge request-supplied hyperparams over training-config defaults."""
+    return {**get_training_config(), **(request_overrides or {})}
 
 
 def validate_plugin_deps():

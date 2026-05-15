@@ -97,6 +97,11 @@
   border-color: rgba(255, 255, 255, 0.9);
 }
 
+.basemap-picker button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* Info panel */
 .info-panel {
   position: absolute;
@@ -270,5 +275,123 @@
   background: rgba(0, 0, 0, 0.6);
   color: #fff;
   font-size: 13px;
+}
+
+/* Training panel */
+.training-panel {
+  position: absolute;
+  top: 24px;
+  right: 12px;
+  width: 240px;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 1;
+  backdrop-filter: blur(8px);
+}
+
+.training-panel-title {
+  font-weight: 600;
+  font-size: 14px;
+  opacity: 0.9;
+}
+
+.training-panel-status {
+  font-size: 13px;
+  opacity: 0.85;
+  line-height: 1.4;
+}
+
+.training-panel-primary {
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 4px;
+  background: rgba(59, 130, 246, 0.85);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.training-panel-primary:hover {
+  background: rgba(59, 130, 246, 1);
+}
+
+.training-panel-secondary {
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.training-panel-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.training-panel-error {
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(239, 68, 68, 0.25);
+  color: #fee2e2;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.training-panel-failed {
+  color: #fca5a5;
+}
+
+.training-panel-link {
+  background: none;
+  border: none;
+  color: #93c5fd;
+  text-decoration: underline;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+
+.training-panel-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.training-panel-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.training-panel-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.training-panel-fields input,
+.training-panel-fields select {
+  padding: 4px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+  font-size: 12px;
+  font-family: inherit;
 }
 

@@ -6,6 +6,7 @@ version = "0.1.0"
 
 [tasks]
 worker = { cmd = "python -m pipeline.src.chip_worker", cwd = ".." }
+train-worker = { cmd = "python -m pipeline.src.train_worker", cwd = ".." }
 test = { cmd = "pytest", cwd = "." }
 
 [dependencies]

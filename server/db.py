@@ -1,3 +1,4 @@
+import datetime
 import io
 import json
 import logging
@@ -19,6 +20,8 @@ _write_lock = threading.Lock()
 _db_path = None
 
 logger = logging.getLogger(__name__)
+
+ACTIVE_RUN_STATUSES = ("queued", "training", "predicting")
 
 
 def _ensure_schema(conn):
@@ -45,6 +48,43 @@ def _ensure_schema(conn):
     """)
     conn.execute(
         "CREATE INDEX IF NOT EXISTS labels_geom_idx ON labels USING RTREE (geometry)"
+    )
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS training_runs (
+            id TEXT PRIMARY KEY,
+            started_at TIMESTAMP NOT NULL,
+            completed_at TIMESTAMP,
+            status TEXT NOT NULL,
+            hyperparams_json TEXT,
+            train_loss_curve_json TEXT,
+            val_loss_curve_json TEXT,
+            model_path TEXT,
+            error_message TEXT
+        )
+    """)
+    # Predictions used to be vector polygons; they're now per-chip raster PNGs
+    # written to disk, so drop the legacy schema if encountered.
+    existing_pred_cols = {
+        r[0]
+        for r in conn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'predictions'"
+        ).fetchall()
+    }
+    if existing_pred_cols and "mask_path" not in existing_pred_cols:
+        logger.info("Dropping legacy 'predictions' table (geometry-based schema)")
+        conn.execute("DROP TABLE predictions")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS predictions (
+            run_id TEXT NOT NULL,
+            chip_id TEXT NOT NULL,
+            class TEXT NOT NULL DEFAULT 'positive',
+            score DOUBLE,
+            mask_path TEXT NOT NULL,
+            PRIMARY KEY (run_id, chip_id)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS predictions_run_idx ON predictions (run_id)"
     )
 
 
@@ -346,6 +386,26 @@ def delete_chips_by_geometry(geometry_wkt: str) -> dict:
     return {"chips_deleted": len(chip_ids), "labels_deleted": labels_deleted}
 
 
+def get_training_chips() -> dict:
+    """Return chip IDs eligible for training, split by partition.
+
+    Only chips marked complete (exhaustively labeled) participate in training
+    or validation — sparse/partial chips are excluded so loss is computed over
+    every pixel without needing a per-pixel loss mask.
+    """
+    conn = _get_conn()
+    train = conn.execute(
+        "SELECT id FROM chips WHERE split = 'train' AND complete = TRUE"
+    ).fetchall()
+    validate = conn.execute(
+        "SELECT id FROM chips WHERE split = 'validate' AND complete = TRUE"
+    ).fetchall()
+    return {
+        "train": [{"id": r[0]} for r in train],
+        "validate": [{"id": r[0]} for r in validate],
+    }
+
+
 def get_labels_for_chips(chip_ids: list[str]) -> dict[str, list[tuple[bytes, str]]]:
     """Spatial join: return {chip_id: [(wkb_bytes, class), ...]} for label burning."""
     if not chip_ids:
@@ -368,3 +428,177 @@ def get_labels_for_chips(chip_ids: list[str]) -> dict[str, list[tuple[bytes, str
     for chip_id, wkb, cls in rows:
         result.setdefault(chip_id, []).append((bytes(wkb), cls))
     return result
+
+
+# ── Training runs ───────────────────────────────────────────────────
+
+
+_RUN_COLUMNS = (
+    "id, started_at, completed_at, status, hyperparams_json, "
+    "train_loss_curve_json, val_loss_curve_json, model_path, error_message"
+)
+
+_CURVE_FIELDS = ("train_loss_curve_json", "val_loss_curve_json")
+
+
+def _parse_run_row(row) -> dict | None:
+    if row is None:
+        return None
+    id_, started_at, completed_at, status, hp, train_curve, val_curve, model_path, err = row
+    return {
+        "id": id_,
+        "started_at": started_at,
+        "completed_at": completed_at,
+        "status": status,
+        "hyperparams": json.loads(hp) if hp else None,
+        "train_loss_curve": json.loads(train_curve) if train_curve else None,
+        "val_loss_curve": json.loads(val_curve) if val_curve else None,
+        "model_path": model_path,
+        "error_message": err,
+    }
+
+
+def create_training_run(run_id: str, hyperparams_json: str | None = None) -> None:
+    """Insert a new training run row in 'queued' state."""
+    conn = _get_conn()
+    started_at = datetime.datetime.now(datetime.timezone.utc)
+    with _write_lock:
+        conn.execute(
+            "INSERT INTO training_runs (id, started_at, status, hyperparams_json) "
+            "VALUES (?, ?, 'queued', ?)",
+            [run_id, started_at, hyperparams_json],
+        )
+
+
+def update_training_run(run_id: str, **fields) -> None:
+    """Partial update; list values for *_loss_curve_json fields are JSON-serialized."""
+    if not fields:
+        return
+    cleaned = {}
+    for k, v in fields.items():
+        if k in _CURVE_FIELDS and isinstance(v, list):
+            cleaned[k] = json.dumps(v)
+        else:
+            cleaned[k] = v
+    set_clause = ", ".join(f"{k} = ?" for k in cleaned)
+    values = list(cleaned.values()) + [run_id]
+    conn = _get_conn()
+    with _write_lock:
+        conn.execute(
+            f"UPDATE training_runs SET {set_clause} WHERE id = ?",
+            values,
+        )
+
+
+def list_training_runs(limit: int = 20) -> list[dict]:
+    """Return most-recent-first list of training runs."""
+    rows = _get_conn().execute(
+        f"SELECT {_RUN_COLUMNS} FROM training_runs ORDER BY started_at DESC LIMIT ?",
+        [limit],
+    ).fetchall()
+    return [_parse_run_row(r) for r in rows]
+
+
+def get_training_run(run_id: str) -> dict | None:
+    row = _get_conn().execute(
+        f"SELECT {_RUN_COLUMNS} FROM training_runs WHERE id = ?",
+        [run_id],
+    ).fetchone()
+    return _parse_run_row(row)
+
+
+def get_active_training_run() -> dict | None:
+    placeholders = ", ".join(["?"] * len(ACTIVE_RUN_STATUSES))
+    row = _get_conn().execute(
+        f"SELECT {_RUN_COLUMNS} FROM training_runs "
+        f"WHERE status IN ({placeholders}) "
+        "ORDER BY started_at DESC LIMIT 1",
+        list(ACTIVE_RUN_STATUSES),
+    ).fetchone()
+    return _parse_run_row(row)
+
+
+def delete_training_run(run_id: str) -> None:
+    """Delete a training run, its prediction rows, and cached mask PNGs on disk."""
+    import shutil
+
+    conn = _get_conn()
+    with _write_lock:
+        conn.execute("DELETE FROM predictions WHERE run_id = ?", [run_id])
+        conn.execute("DELETE FROM training_runs WHERE id = ?", [run_id])
+    shutil.rmtree(_predictions_dir(run_id), ignore_errors=True)
+
+
+# ── Predictions ─────────────────────────────────────────────────────
+
+
+def _predictions_dir(run_id: str) -> Path:
+    cfg = get_config()
+    return Path(cfg["data_dir"]) / "predictions" / run_id
+
+
+def save_prediction_mask(
+    run_id: str,
+    chip_id: str,
+    score: float,
+    png_bytes: bytes,
+    label_class: str = "positive",
+) -> str:
+    """Write a per-chip prediction mask PNG to disk and upsert the predictions row.
+
+    Returns the absolute file path that was written.
+    """
+    out_dir = _predictions_dir(run_id)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    mask_path = out_dir / f"{chip_id}.png"
+    mask_path.write_bytes(png_bytes)
+
+    conn = _get_conn()
+    with _write_lock:
+        conn.execute(
+            "INSERT OR REPLACE INTO predictions (run_id, chip_id, class, score, mask_path) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [run_id, chip_id, label_class, score, str(mask_path)],
+        )
+    return str(mask_path)
+
+
+def get_prediction_mask_path(run_id: str, chip_id: str) -> str | None:
+    """Return the mask file path for a (run, chip) pair, or None if not predicted."""
+    row = _get_conn().execute(
+        "SELECT mask_path FROM predictions WHERE run_id = ? AND chip_id = ?",
+        [run_id, chip_id],
+    ).fetchone()
+    return row[0] if row else None
+
+
+def get_predictions_by_bbox(run_id: str, bbox_lonlat: tuple) -> list[dict]:
+    """Return predictions in `run_id` whose chip intersects an EPSG:4326 bbox.
+
+    Spatial filtering uses the chip footprint (a join), since predictions are
+    chip-aligned rasters with no independent geometry.
+    """
+    from pyproj import Transformer
+
+    cfg = get_config()
+    project_crs = cfg["crs"]
+    transformer = Transformer.from_crs("EPSG:4326", project_crs, always_xy=True)
+
+    west, south, east, north = bbox_lonlat
+    min_x, min_y = transformer.transform(west, south)
+    max_x, max_y = transformer.transform(east, north)
+    envelope_wkt = (
+        f"POLYGON(({min_x} {min_y}, {max_x} {min_y}, "
+        f"{max_x} {max_y}, {min_x} {max_y}, {min_x} {min_y}))"
+    )
+
+    rows = _get_conn().execute(
+        "SELECT p.chip_id, p.class, p.score "
+        "FROM predictions p JOIN chips c ON c.id = p.chip_id "
+        "WHERE p.run_id = ? AND ST_Intersects(c.geometry, ST_GeomFromText(?))",
+        [run_id, envelope_wkt],
+    ).fetchall()
+    return [
+        {"chip_id": r[0], "class": r[1], "score": r[2]}
+        for r in rows
+    ]
