@@ -143,7 +143,7 @@ def insert_labels(features: list[dict], crs: str):
             else:
                 conn.execute(
                     "INSERT OR REPLACE INTO labels (id, class, geometry) "
-                    "VALUES (?, ?, ST_Transform(ST_GeomFromGeoJSON(?), ?, ?))",
+                    "VALUES (?, ?, ST_Transform(ST_GeomFromGeoJSON(?), ?, ?, always_xy := true))",
                     [label_id, label_class, geom_json, crs, project_crs],
                 )
 

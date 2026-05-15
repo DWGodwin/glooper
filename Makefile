@@ -1,4 +1,4 @@
-.PHONY: dev dev-cuda server pipeline pipeline-cuda frontend
+.PHONY: dev dev-cuda server pipeline pipeline-cuda frontend test test-pipeline
 
 # Run all services (CPU)
 dev:
@@ -21,3 +21,11 @@ pipeline-cuda:
 
 frontend:
 	npm run dev
+
+# Run the server test suite
+test:
+	cd server && pixi run test
+
+# Run the pipeline test suite
+test-pipeline:
+	cd pipeline && pixi run test
