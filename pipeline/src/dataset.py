@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-import duckdb
 import numpy as np
 import rasterio
 from rasterio.features import rasterize
@@ -147,36 +146,3 @@ def sam_collate(batch: list[dict]) -> dict:
         "chip_ids": chip_ids,
         "pixel_values": torch.stack(images),
     }
-
-
-def query_labels(db_path: str | Path, chip_ids: list[str]) -> dict[str, list[tuple[bytes, str]]]:
-    """Run the spatial join query against DuckDB (read-only).
-
-    Returns {chip_id: [(wkb_bytes, class_str), ...]} for use as the
-    ``labels`` argument to ChipDataset. Runs once at dataset construction
-    time, before DataLoader workers fork.
-    """
-    if not chip_ids:
-        return {}
-
-    conn = duckdb.connect(str(db_path), read_only=True)
-    conn.execute("LOAD spatial")
-
-    placeholders = ", ".join(["?"] * len(chip_ids))
-    rows = conn.execute(
-        f"""
-        SELECT c.id AS chip_id,
-               ST_AsBinary(ST_Intersection(l.geometry, c.geometry)) AS label_geom,
-               l.class
-        FROM chips c
-        JOIN labels l ON ST_Intersects(c.geometry, l.geometry)
-        WHERE c.id IN ({placeholders})
-        """,
-        chip_ids,
-    ).fetchall()
-    conn.close()
-
-    result: dict[str, list[tuple[bytes, str]]] = {}
-    for chip_id, wkb, cls in rows:
-        result.setdefault(chip_id, []).append((bytes(wkb), cls))
-    return result

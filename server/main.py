@@ -7,7 +7,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from server.config import get_enabled_plugins, validate_plugin_deps
 from server.db import init_db
 from server.providers import init_provider
-from server.routers import chips, config, labels, models, study_areas
+from server.routers import (
+    chips,
+    config,
+    labels,
+    models,
+    predictions,
+    study_areas,
+    training,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +33,8 @@ app.include_router(study_areas.router)
 app.include_router(chips.router)
 app.include_router(labels.router)
 app.include_router(models.router)
+app.include_router(training.router)
+app.include_router(predictions.router)
 
 
 for plugin_name in get_enabled_plugins():

@@ -17,6 +17,7 @@ function BasemapPicker({ activeBasemap, onBasemapChange, pluginControls = [] }) 
           key={ctrl.label || i}
           className={ctrl.active ? 'active' : ''}
           onClick={ctrl.onToggle}
+          disabled={ctrl.disabled}
         >
           {ctrl.label}
         </button>

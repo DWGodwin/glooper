@@ -60,7 +60,67 @@ function getMapBbox(map) {
   return `${bounds.getWest()},${bounds.getSouth()},${bounds.getEast()},${bounds.getNorth()}`
 }
 
-export function useLabelingView({ active, map, featureById, refreshChips, layerProviders = [] }) {
+// Convert a chip GeoJSON feature's coordinate ring into MapLibre image-source
+// corner order [TL, TR, BR, BL]. Returns null if the chip isn't known yet.
+// Source vertex order is [NE, SE, SW, NW, NE-closing], same convention as selectChip.
+function chipImageCorners(featureById, chipId) {
+  const feature = featureById.current[chipId]
+  if (!feature) return null
+  const ring = feature.geometry.coordinates[0]
+  return [ring[3], ring[0], ring[1], ring[2]]
+}
+
+// Add/update per-chip raster overlays. `desired` is a map of chipId → imageUrl.
+// `tracked` is a Set we mutate to track which chip IDs currently have layers.
+// Removes any tracked overlay whose chipId is no longer in `desired`.
+function syncChipRasterOverlays(map, featureById, prefix, desired, tracked) {
+  for (const chipId of tracked) {
+    if (!desired.has(chipId)) {
+      const layerId = `${prefix}-${chipId}`
+      if (map.getLayer(layerId)) map.removeLayer(layerId)
+      if (map.getSource(layerId)) map.removeSource(layerId)
+      tracked.delete(chipId)
+    }
+  }
+  for (const [chipId, url] of desired) {
+    const id = `${prefix}-${chipId}`
+    if (tracked.has(chipId)) continue
+    const corners = chipImageCorners(featureById, chipId)
+    if (!corners) continue
+    map.addSource(id, { type: 'image', url, coordinates: corners })
+    map.addLayer({
+      id,
+      type: 'raster',
+      source: id,
+      paint: { 'raster-opacity': 0.7, 'raster-fade-duration': 0 },
+    })
+    tracked.add(chipId)
+  }
+  raiseLabels(map)
+}
+
+function clearChipRasterOverlays(map, prefix, tracked) {
+  for (const chipId of tracked) {
+    const id = `${prefix}-${chipId}`
+    if (map.getLayer(id)) map.removeLayer(id)
+    if (map.getSource(id)) map.removeSource(id)
+  }
+  tracked.clear()
+}
+
+export function useLabelingView({
+  active,
+  map,
+  featureById,
+  refreshChips,
+  layerProviders = [],
+  currentRunId = null,
+  prevRunId = null,
+  showPredictions = false,
+  showDiff = false,
+  onTogglePredictions = () => {},
+  onToggleDiff = () => {},
+}) {
   const [selectedChipId, setSelectedChipId] = useState(null)
   const [clickPoints, setClickPoints] = useState([])
   const [maskInfo, setMaskInfo] = useState(null) // { count, scores } — lightweight summary for UI
@@ -212,6 +272,94 @@ export function useLabelingView({ active, map, featureById, refreshChips, layerP
       if (map.getSource('labels')) map.removeSource('labels')
     }
   }, [map, active, showLabels])
+
+  // Predictions layer (solo): per-chip raster overlays, native to U-Net output.
+  useEffect(() => {
+    const wanted = !!map && active && showPredictions && !showDiff && !!currentRunId
+    const tracked = new Set()
+    if (!wanted) {
+      if (map) clearChipRasterOverlays(map, 'pred', tracked)
+      return
+    }
+
+    let cancelled = false
+    let debounceTimer = null
+
+    function fetchPredictions() {
+      const bbox = getMapBbox(map)
+      data.getPredictions(currentRunId, bbox)
+        .then((resp) => {
+          if (cancelled) return
+          const desired = new Map(
+            (resp.predictions ?? []).map((p) => [
+              p.chip_id,
+              data.predictionMaskUrl(currentRunId, p.chip_id),
+            ])
+          )
+          syncChipRasterOverlays(map, featureById, 'pred', desired, tracked)
+        })
+        .catch((e) => console.error('Failed to fetch predictions:', e))
+    }
+
+    function onMoveEnd() {
+      clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(fetchPredictions, 1000)
+    }
+
+    fetchPredictions()
+    map.on('moveend', onMoveEnd)
+
+    return () => {
+      cancelled = true
+      clearTimeout(debounceTimer)
+      map.off('moveend', onMoveEnd)
+      clearChipRasterOverlays(map, 'pred', tracked)
+    }
+  }, [map, active, showPredictions, showDiff, currentRunId, featureById])
+
+  // Predictions diff layer: per-chip RGBA composite (gain/loss/constant) computed server-side.
+  useEffect(() => {
+    const wanted = !!map && active && showDiff && !!currentRunId && !!prevRunId
+    const tracked = new Set()
+    if (!wanted) {
+      if (map) clearChipRasterOverlays(map, 'predd', tracked)
+      return
+    }
+
+    let cancelled = false
+    let debounceTimer = null
+
+    function fetchDiff() {
+      const bbox = getMapBbox(map)
+      data.getPredictionsDiff(prevRunId, currentRunId, bbox)
+        .then((resp) => {
+          if (cancelled) return
+          const desired = new Map(
+            (resp.chips ?? []).map((c) => [
+              c.chip_id,
+              data.predictionDiffMaskUrl(prevRunId, currentRunId, c.chip_id),
+            ])
+          )
+          syncChipRasterOverlays(map, featureById, 'predd', desired, tracked)
+        })
+        .catch((e) => console.error('Failed to fetch predictions diff:', e))
+    }
+
+    function onMoveEnd() {
+      clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(fetchDiff, 1000)
+    }
+
+    fetchDiff()
+    map.on('moveend', onMoveEnd)
+
+    return () => {
+      cancelled = true
+      clearTimeout(debounceTimer)
+      map.off('moveend', onMoveEnd)
+      clearChipRasterOverlays(map, 'predd', tracked)
+    }
+  }, [map, active, showDiff, currentRunId, prevRunId, featureById])
 
   // Event handlers — active only when this view is active
   useEffect(() => {
@@ -841,8 +989,24 @@ export function useLabelingView({ active, map, featureById, refreshChips, layerP
   const toggleLabels = useCallback(() => setShowLabels(prev => !prev), [])
   const pluginControls = useMemo(() => [
     { label: 'Labels', active: showLabels, onToggle: toggleLabels },
+    {
+      label: 'Predictions',
+      active: showPredictions,
+      onToggle: onTogglePredictions,
+      disabled: !currentRunId,
+    },
+    {
+      label: 'Compare prev',
+      active: showDiff,
+      onToggle: onToggleDiff,
+      disabled: !prevRunId,
+    },
     ...layerProviders.flatMap(lp => lp.controls || []),
-  ], [showLabels, toggleLabels, layerProviders])
+  ], [
+    showLabels, toggleLabels, layerProviders,
+    showPredictions, showDiff, currentRunId, prevRunId,
+    onTogglePredictions, onToggleDiff,
+  ])
 
   // Current SAM mask for compositing — kept in a ref so large binary data
   // never enters React state. Updated by effects/handlers that change masks.

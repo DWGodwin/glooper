@@ -3,7 +3,9 @@
 !.pixi/config.toml
 
 # model weights (downloaded at runtime)
-models/
+*.pth
+*.pt
+*.onnx
 
 # intermediate features
 features/

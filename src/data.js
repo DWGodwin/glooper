@@ -2,6 +2,26 @@ const BASE = import.meta.env.VITE_STATIC_BASE ?? import.meta.env.BASE_URL
 const API = import.meta.env.VITE_API_BASE || ''
 const STATIC = import.meta.env.VITE_DATA_SOURCE !== 'api'
 
+export class HttpError extends Error {
+  constructor(status, body) {
+    super(`HTTP ${status}`)
+    this.status = status
+    this.body = body
+  }
+}
+
+async function requestJson(url, init) {
+  const res = await fetch(url, init)
+  let body = null
+  try {
+    body = await res.json()
+  } catch {
+    body = null
+  }
+  if (!res.ok) throw new HttpError(res.status, body)
+  return body
+}
+
 export const data = {
   chipsUrl:      ()   => STATIC ? `${BASE}data/metadata.geojson`        : `${API}/api/chips`,
   chipImageUrl:  (id) => STATIC ? `${BASE}data/chips/${id}.png`          : `${API}/api/chips/${id}/image`,
@@ -51,4 +71,31 @@ export const data = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...(point && { point }), ...(bbox && { bbox }) }),
     }).then(r => r.json()),
+
+  // Training
+  getTrainingConfig: () => requestJson(`${API}/api/training/config`),
+  startTrainingRun: (hyperparams = null) =>
+    requestJson(`${API}/api/training/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hyperparams }),
+    }),
+  getTrainingRun: (runId) => requestJson(`${API}/api/training/runs/${runId}`),
+  listTrainingRuns: () => requestJson(`${API}/api/training/runs`),
+  cancelTrainingRun: (runId) =>
+    requestJson(`${API}/api/training/runs/${runId}/cancel`, { method: 'POST' }),
+
+  // Predictions
+  getPredictions: (runId, bbox) =>
+    requestJson(`${API}/api/predictions?run_id=${encodeURIComponent(runId)}&bbox=${bbox}`),
+  predictionMaskUrl: (runId, chipId) =>
+    `${API}/api/predictions/${encodeURIComponent(runId)}/chips/${encodeURIComponent(chipId)}/mask.png`,
+  getPredictionsDiff: (runA, runB, bbox) =>
+    requestJson(
+      `${API}/api/predictions/diff?run_a=${encodeURIComponent(runA)}` +
+      `&run_b=${encodeURIComponent(runB)}&bbox=${bbox}`,
+    ),
+  predictionDiffMaskUrl: (runA, runB, chipId) =>
+    `${API}/api/predictions/diff/${encodeURIComponent(runA)}/${encodeURIComponent(runB)}` +
+    `/chips/${encodeURIComponent(chipId)}/mask.png`,
 }

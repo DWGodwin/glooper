@@ -33,6 +33,18 @@ vectorization:
 #       strategy: min_rotated_rect
 #       tolerance_px: 2
 
+# Training: model + loop defaults (overridable per-run via POST /api/training/runs)
+training:
+  model_size: small         # small | medium | large (base channels: 16 | 32 | 64)
+  epochs: 20
+  batch_size: 4
+  learning_rate: 0.001
+  pos_weight: auto          # null | "auto" | float — positive-class weight for BCE
+  augmentations: [hflip, vflip, rot90]
+  worker_host: localhost
+  worker_port: 9101
+  models_dir: data/training_runs
+
 # Pipeline: imagery provider (read by the chip worker)
 imagery_provider: mass_orthos
 imagery_provider_config:
