@@ -1,5 +1,6 @@
 import io
 import json
+import logging
 import re
 import threading
 import uuid
@@ -13,19 +14,18 @@ from rasterio.transform import from_bounds
 from server.config import get_config, get_vectorization_config
 from server.vectorize import vectorize_mask
 
-_conn = None
+_local = threading.local()
 _write_lock = threading.Lock()
+_db_path = None
+
+logger = logging.getLogger(__name__)
 
 
-def init_db():
-    global _conn
-    cfg = get_config()
-    db_path = Path(cfg["db_path"])
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    _conn = duckdb.connect(str(db_path))
-    _conn.execute("INSTALL spatial")
-    _conn.execute("LOAD spatial")
-    _conn.execute("""
+def _ensure_schema(conn):
+    """Create tables and indexes if they don't exist."""
+    conn.execute("INSTALL spatial")
+    conn.execute("LOAD spatial")
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS chips (
             id TEXT PRIMARY KEY,
             split TEXT NOT NULL,
@@ -33,32 +33,51 @@ def init_db():
             geometry GEOMETRY NOT NULL
         )
     """)
-    _conn.execute("""
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS labels (
             id TEXT PRIMARY KEY,
             class TEXT NOT NULL DEFAULT 'positive',
             geometry GEOMETRY NOT NULL
         )
     """)
-    _conn.execute(
+    conn.execute(
         "CREATE INDEX IF NOT EXISTS labels_geom_idx ON labels USING RTREE (geometry)"
     )
 
 
-def get_db():
-    if _conn is None:
-        raise RuntimeError("Database not initialized — call init_db() first")
-    return _conn
+def _get_conn():
+    """Return a per-thread DuckDB connection, creating one if needed."""
+    conn = getattr(_local, "conn", None)
+    if conn is not None:
+        try:
+            conn.execute("SELECT 1")
+            return conn
+        except Exception:
+            logger.warning("Thread-local DuckDB connection dead — reopening")
+            try:
+                conn.close()
+            except Exception:
+                pass
+    conn = duckdb.connect(str(_db_path))
+    conn.execute("LOAD spatial")
+    _local.conn = conn
+    return conn
 
 
-def _cursor():
-    """Return a thread-local cursor for concurrent reads."""
-    return get_db().cursor()
+def init_db():
+    global _db_path
+    cfg = get_config()
+    _db_path = Path(cfg["db_path"])
+    _db_path.parent.mkdir(parents=True, exist_ok=True)
+    # Bootstrap schema on the first connection
+    conn = duckdb.connect(str(_db_path))
+    _ensure_schema(conn)
+    conn.close()
 
 
 def insert_chips(chips, crs):
     """Batch insert chips, skipping duplicates."""
-    conn = get_db()
+    conn = _get_conn()
     with _write_lock:
         for chip in chips:
             conn.execute(
@@ -70,7 +89,7 @@ def insert_chips(chips, crs):
 def get_all_chips():
     cfg = get_config()
     crs = cfg["crs"]
-    rows = _cursor().execute(
+    rows = _get_conn().execute(
         f"SELECT id, split, status, ST_AsGeoJSON(ST_FlipCoordinates(ST_Transform(geometry, '{crs}', 'EPSG:4326'))) AS geojson FROM chips"
     ).fetchall()
     return [
@@ -81,7 +100,7 @@ def get_all_chips():
 
 def get_chip_by_id(chip_id):
     """Return a chip's id and geometry as WKT, or None if not found."""
-    rows = _cursor().execute(
+    rows = _get_conn().execute(
         "SELECT id, ST_AsText(geometry) AS geometry_wkt FROM chips WHERE id = ?",
         [chip_id],
     ).fetchall()
@@ -93,7 +112,7 @@ def get_chip_by_id(chip_id):
 def delete_chips(ids):
     if not ids:
         return 0
-    conn = get_db()
+    conn = _get_conn()
     placeholders = ", ".join(["?"] * len(ids))
     with _write_lock:
         result = conn.execute(f"DELETE FROM chips WHERE id IN ({placeholders})", ids)
@@ -105,7 +124,7 @@ def delete_chips(ids):
 
 def insert_labels(features: list[dict], crs: str):
     """Insert GeoJSON features as label rows, transforming to project CRS."""
-    conn = get_db()
+    conn = _get_conn()
     cfg = get_config()
     project_crs = cfg["crs"]
 
@@ -133,7 +152,7 @@ def get_all_labels(crs: str = "EPSG:4326") -> list[dict]:
     """Return all labels as GeoJSON-ready dicts."""
     cfg = get_config()
     project_crs = cfg["crs"]
-    rows = _cursor().execute(
+    rows = _get_conn().execute(
         f"SELECT id, class, ST_AsGeoJSON(ST_FlipCoordinates(ST_Transform(geometry, '{project_crs}', '{crs}'))) "
         "FROM labels"
     ).fetchall()
@@ -160,7 +179,7 @@ def get_labels_by_bbox(bbox: tuple[float, float, float, float]) -> list[dict]:
         f"{max_x} {max_y}, {min_x} {max_y}, {min_x} {min_y}))"
     )
 
-    rows = _cursor().execute(
+    rows = _get_conn().execute(
         f"SELECT id, class, ST_AsGeoJSON(ST_FlipCoordinates(ST_Transform(geometry, '{project_crs}', 'EPSG:4326'))) "
         "FROM labels WHERE ST_Intersects(geometry, ST_GeomFromText(?))",
         [envelope_wkt],
@@ -174,7 +193,7 @@ def get_labels_by_bbox(bbox: tuple[float, float, float, float]) -> list[dict]:
 def delete_labels(ids: list[str]) -> int:
     if not ids:
         return 0
-    conn = get_db()
+    conn = _get_conn()
     placeholders = ", ".join(["?"] * len(ids))
     with _write_lock:
         result = conn.execute(f"DELETE FROM labels WHERE id IN ({placeholders})", ids)
@@ -183,7 +202,7 @@ def delete_labels(ids: list[str]) -> int:
 
 def delete_labels_by_geometry(geometry_wkt: str) -> int:
     """Delete all labels intersecting the given geometry (in project CRS)."""
-    conn = get_db()
+    conn = _get_conn()
     with _write_lock:
         ids = conn.execute(
             "SELECT id FROM labels WHERE ST_Intersects(geometry, ST_GeomFromText(?))",
@@ -238,7 +257,7 @@ def save_chip_label(chip_id: str, mask_png_bytes: bytes, label_class: str = "pos
     geometry = vectorize_mask(mask_array, transform, config)
 
     label_id = str(uuid.uuid4())
-    conn = get_db()
+    conn = _get_conn()
     with _write_lock:
         conn.execute(
             "INSERT INTO labels (id, class, geometry) "
@@ -273,7 +292,7 @@ def delete_chips_by_geometry(geometry_wkt: str) -> dict:
 
     Returns {"chips_deleted": int, "labels_deleted": int}.
     """
-    conn = get_db()
+    conn = _get_conn()
     with _write_lock:
         # Find intersecting chips
         chip_rows = conn.execute(
@@ -315,9 +334,9 @@ def get_labels_for_chips(chip_ids: list[str]) -> dict[str, list[tuple[bytes, str
     """Spatial join: return {chip_id: [(wkb_bytes, class), ...]} for label burning."""
     if not chip_ids:
         return {}
-    conn = get_db()
+    conn = _get_conn()
     placeholders = ", ".join(["?"] * len(chip_ids))
-    rows = _cursor().execute(
+    rows = conn.execute(
         f"""
         SELECT c.id AS chip_id,
                ST_AsBinary(ST_Intersection(l.geometry, c.geometry)) AS label_geom,
