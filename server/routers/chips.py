@@ -5,7 +5,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from server.config import get_config
-from server.db import get_all_chips, get_chip_by_id, delete_chips as db_delete_chips
+from server.db import get_all_chips, get_chip_by_id, delete_chips as db_delete_chips, mark_chip_complete
 from server.providers import get_chip_image
 from server.worker_client import WorkerUnavailable
 
@@ -31,6 +31,7 @@ def list_chips():
                 "id": chip["id"],
                 "status": chip["status"],
                 "split": chip["split"],
+                "complete": chip.get("complete", False),
                 "label": None,
             },
             "geometry": chip["geojson"],
@@ -85,3 +86,14 @@ def chip_sam_embedding(chip_id: str):
 def delete_chips(req: DeleteChipsRequest):
     count = db_delete_chips(req.ids)
     return {"deleted": count}
+
+
+class ChipCompleteRequest(BaseModel):
+    complete: bool = True
+
+
+@router.post("/chips/{chip_id}/complete")
+def set_chip_complete(chip_id: str, req: ChipCompleteRequest):
+    if not mark_chip_complete(chip_id, req.complete):
+        raise HTTPException(status_code=404, detail=f"Chip '{chip_id}' not found")
+    return {"ok": True, "chip_id": chip_id, "complete": req.complete}

@@ -33,6 +33,9 @@ def _ensure_schema(conn):
             geometry GEOMETRY NOT NULL
         )
     """)
+    conn.execute(
+        "ALTER TABLE chips ADD COLUMN IF NOT EXISTS complete BOOLEAN DEFAULT FALSE"
+    )
     conn.execute("""
         CREATE TABLE IF NOT EXISTS labels (
             id TEXT PRIMARY KEY,
@@ -90,10 +93,10 @@ def get_all_chips():
     cfg = get_config()
     crs = cfg["crs"]
     rows = _get_conn().execute(
-        f"SELECT id, split, status, ST_AsGeoJSON(ST_FlipCoordinates(ST_Transform(geometry, '{crs}', 'EPSG:4326'))) AS geojson FROM chips"
+        f"SELECT id, split, status, complete, ST_AsGeoJSON(ST_FlipCoordinates(ST_Transform(geometry, '{crs}', 'EPSG:4326'))) AS geojson FROM chips"
     ).fetchall()
     return [
-        {"id": r[0], "split": r[1], "status": r[2], "geojson": json.loads(r[3])}
+        {"id": r[0], "split": r[1], "status": r[2], "complete": bool(r[3]), "geojson": json.loads(r[4])}
         for r in rows
     ]
 
@@ -270,6 +273,19 @@ def save_chip_label(chip_id: str, mask_png_bytes: bytes, label_class: str = "pos
         )
 
     return label_id
+
+
+def mark_chip_complete(chip_id: str, complete: bool = True) -> bool:
+    """Set the chip's 'complete' flag. Returns False if the chip does not exist."""
+    conn = _get_conn()
+    with _write_lock:
+        if not conn.execute("SELECT 1 FROM chips WHERE id = ?", [chip_id]).fetchone():
+            return False
+        conn.execute(
+            "UPDATE chips SET complete = ? WHERE id = ?",
+            [complete, chip_id],
+        )
+    return True
 
 
 def _delete_chip_files(chip_ids: list[str]):

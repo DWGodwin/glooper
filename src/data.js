@@ -25,6 +25,12 @@ export const data = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mask: maskPngBase64, label_class: labelClass }),
     }).then(r => r.json()),
+  markChipComplete: (chipId, complete = true) =>
+    fetch(`${API}/api/chips/${chipId}/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ complete }),
+    }).then(r => r.json()),
   vectorizePreview: (chipId, maskPngBase64, labelClass = 'positive', vectorization = null) =>
     fetch(`${API}/api/chips/${chipId}/vectorize-preview`, {
       method: 'POST',

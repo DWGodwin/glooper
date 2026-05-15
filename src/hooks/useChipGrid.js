@@ -7,7 +7,7 @@ export function useChipGrid(map) {
 
   const loadChips = useCallback(async () => {
     if (!map) return
-    const resp = await fetch(data.chipsUrl())
+    const resp = await fetch(data.chipsUrl(), { cache: 'no-store' })
     const raw = await resp.json()
 
     const index = {}
@@ -41,7 +41,11 @@ export function useChipGrid(map) {
           'validate', '#f59e0b',
           '#888888',
         ],
-        'fill-opacity': 0.15,
+        'fill-opacity': [
+          'case',
+          ['==', ['get', 'complete'], true], 0.4,
+          0.15,
+        ],
       },
     })
 

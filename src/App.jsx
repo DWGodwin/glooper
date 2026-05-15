@@ -24,6 +24,7 @@ function AppInner() {
     active: activeView === 'labeling',
     map,
     featureById: chipGrid.featureById,
+    refreshChips: chipGrid.refreshChips,
     layerProviders: pluginLayers,
   })
   const pluginViews = getPluginViews()
