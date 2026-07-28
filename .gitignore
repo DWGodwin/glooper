@@ -26,7 +26,6 @@ dist-ssr
 *__pycache__*
 .pixi/
 
-CLAUDE.md
 .claude/
 .agents/
 /data/
